@@ -18,8 +18,8 @@ export default function DashboardLayout({
       {/* 좌측 사이드바 */}
       <aside className="w-64 bg-gray-200 p-6 overflow-y-auto">
         <div className="mb-8">
-          <h1 className="text-xl font-bold text-gray-800">MEDIA REP</h1>
-          <p className="text-sm text-gray-600">Contents Management System</p>
+          <h1 className="text-xl font-bold text-gray-800">SmartCaster</h1>
+          <p className="text-sm text-gray-600">Advertisement Management System</p>
         </div>
 
         <nav className="space-y-1">
@@ -80,6 +80,30 @@ export default function DashboardLayout({
             }`}
           >
             📁 프로젝트
+          </Link>
+
+          {/* 송출 관리 */}
+          <Link
+            href="/dashboard/assignments"
+            className={`block px-4 py-3 rounded-lg transition-colors ${
+              pathname.startsWith("/dashboard/assignments")
+                ? "bg-cyan-500 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            📡 송출 관리
+          </Link>
+
+          {/* 회원 관리 */}
+          <Link
+            href="/dashboard/members"
+            className={`block px-4 py-3 rounded-lg transition-colors ${
+              pathname.startsWith("/dashboard/members")
+                ? "bg-cyan-500 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            👥 회원 관리
           </Link>
         </nav>
       </aside>
