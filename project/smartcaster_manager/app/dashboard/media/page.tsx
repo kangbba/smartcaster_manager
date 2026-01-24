@@ -11,7 +11,7 @@ const dummyProjects = [
     totalSize: "45.2 MB",
     createdAt: "2026-01-20",
     files: [
-      { id: 1, name: "샴푸_광고_30초.mp4", type: "video", size: "24.5 MB", duration: "00:30" },
+      { id: 1, name: "샴푸_광고_30초.mp4", type: "video", size: "24.5 MB", durationSeconds: 30 },
       { id: 2, name: "샴푸_배너_메인.jpg", type: "image", size: "8.3 MB" },
       { id: 3, name: "샴푸_배너_서브.jpg", type: "image", size: "6.2 MB" },
       { id: 4, name: "프로모션_텍스트.txt", type: "text", size: "1.2 KB" },
@@ -36,7 +36,7 @@ const dummyProjects = [
     totalSize: "32.1 MB",
     createdAt: "2026-01-15",
     files: [
-      { id: 8, name: "특가_영상.mp4", type: "video", size: "32.1 MB", duration: "00:45" },
+      { id: 8, name: "특가_영상.mp4", type: "video", size: "32.1 MB", durationSeconds: 45 },
     ]
   },
 ];
@@ -196,7 +196,9 @@ export default function MediaPage() {
                     </td>
                     <td className="px-6 py-4 text-gray-600">{file.size}</td>
                     <td className="px-6 py-4 text-gray-600">
-                      {'duration' in file ? file.duration : '-'}
+                      {"durationSeconds" in file
+                        ? `${Math.floor(file.durationSeconds / 60)}:${String(file.durationSeconds % 60).padStart(2, "0")}`
+                        : "-"}
                     </td>
                     <td className="px-6 py-4">
                       <button className="text-cyan-600 hover:text-cyan-700 mr-3">미리보기</button>

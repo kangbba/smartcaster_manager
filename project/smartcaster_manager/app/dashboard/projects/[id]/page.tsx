@@ -2,117 +2,72 @@
 
 import { useState, use, useEffect } from "react";
 import { useRouter } from "next/navigation";
-
-type MediaFile = {
-  id: number;
-  name: string;
-  type: "video" | "image";
-  size: string;
-  duration?: string;
-  uploadDate: string;
-};
-
-type Page = {
-  id: string;
-  name: string;
-  backgroundColor: string;
-  text?: string;
-  fontSize?: number;
-  textColor?: string;
-  mediaFileId?: number;
-};
-
-type Playlist = {
-  id: string;
-  name: string;
-  template: string;
-  pageIds: string[];
-  createdAt: string;
-};
-
-// Dummy 데이터
-const projectData = {
-  1: {
-    id: 1,
-    name: "2026 S/S 신상품 런칭",
-    client: "나이키 코리아",
-    status: "active",
-    createdAt: "2026-01-20",
-    media: [
-      { id: 1, name: "Nike_SS2026_Hero_60s.mp4", type: "video" as const, size: "85.2 MB", duration: "01:00", uploadDate: "2026-01-20" },
-      { id: 2, name: "Nike_SS2026_Hero_30s.mp4", type: "video" as const, size: "42.8 MB", duration: "00:30", uploadDate: "2026-01-20" },
-      { id: 3, name: "Nike_SS2026_Product_AirMax.jpg", type: "image" as const, size: "12.5 MB", uploadDate: "2026-01-20" },
-      { id: 4, name: "Nike_SS2026_Product_Pegasus.jpg", type: "image" as const, size: "11.8 MB", uploadDate: "2026-01-20" },
-      { id: 5, name: "Nike_SS2026_Product_Vomero.jpg", type: "image" as const, size: "10.3 MB", uploadDate: "2026-01-20" },
-      { id: 6, name: "Nike_SS2026_Lifestyle_01.jpg", type: "image" as const, size: "15.2 MB", uploadDate: "2026-01-20" },
-      { id: 7, name: "Nike_SS2026_Lifestyle_02.jpg", type: "image" as const, size: "14.8 MB", uploadDate: "2026-01-20" },
-      { id: 8, name: "Nike_SS2026_Logo_Animation.mp4", type: "video" as const, size: "18.5 MB", duration: "00:10", uploadDate: "2026-01-20" },
-    ],
-    pages: [
-      {
-        id: "page_001",
-        name: "Hero 영상",
-        backgroundColor: "#000000",
-        mediaFileId: 1,
-      },
-      {
-        id: "page_002",
-        name: "제품 소개",
-        backgroundColor: "#FFFFFF",
-        text: "NEW ARRIVALS",
-        fontSize: 64,
-        textColor: "#000000",
-        mediaFileId: 3,
-      },
-      {
-        id: "page_003",
-        name: "특가 안내",
-        backgroundColor: "#1E40AF",
-        text: "특가 할인\n\n지금 바로 확인하세요!",
-        fontSize: 48,
-        textColor: "#FFFFFF",
-      },
-    ],
-    playlists: [
-      {
-        id: "pl_001",
-        name: "메인 매장용 플레이리스트",
-        template: "3840x2160 UHD 단일화면",
-        pageIds: ["page_001", "page_002", "page_003"],
-        createdAt: "2026-01-21",
-      },
-      {
-        id: "pl_002",
-        name: "세일 매장용 플레이리스트",
-        template: "1080x1920 세로형",
-        pageIds: ["page_003", "page_002"],
-        createdAt: "2026-01-21",
-      },
-    ],
-  },
-};
+import { Slide } from "@/lib/types";
+import { getProjectById } from "@/lib/data/projects";
+import { formatDurationSeconds, getFileIcon } from "@/lib/utils/fileIcons";
+import { getDefaultAnimationConfig } from "@/lib/animation-specs";
+import MediaLibraryPanel from "@/app/components/MediaLibraryPanel";
+import SlideCanvas from "@/app/components/SlideCanvas";
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
-  const [pages, setPages] = useState<Page[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [editingPage, setEditingPage] = useState<Page | null>(null);
-  const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
-  const [selectedPageIndex, setSelectedPageIndex] = useState<number>(0);
-  const [draggedPageId, setDraggedPageId] = useState<string | null>(null);
-  const [draggedPlaylistIndex, setDraggedPlaylistIndex] = useState<number | null>(null);
-  const [selectedMediaId, setSelectedMediaId] = useState<number | null>(null);
+  const [slides, setSlides] = useState<Slide[]>([]);
+  const [editingSlide, setEditingSlide] = useState<Slide | null>(null);
+  const [selectedMediaName, setSelectedMediaName] = useState<string | null>(null);
+  const [showEditPanel, setShowEditPanel] = useState<boolean>(false);
+  const [timelinePosition, setTimelinePosition] = useState<number>(0); // 타임라인 위치 (0 ~ duration)
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
   const { id } = use(params);
-  const project = projectData[Number(id) as keyof typeof projectData];
+  const project = getProjectById(Number(id));
+
+  const getEffectiveDuration = (slide: Slide) => {
+    const mediaName = slide.video || slide.image;
+    const media = mediaName ? project?.media.find((m) => m.name === mediaName) : null;
+    const mediaSeconds = media?.durationSeconds ?? null;
+    if (!mediaSeconds) return slide.duration;
+    return Math.max(slide.duration, mediaSeconds);
+  };
 
   // 초기화
   useEffect(() => {
     if (project) {
-      setPages(project.pages);
-      setPlaylists(project.playlists);
+      setSlides(project.slides);
     }
   }, [project]);
+
+  useEffect(() => {
+    if (!editingSlide) return;
+    const effectiveDuration = getEffectiveDuration(editingSlide);
+    setTimelinePosition((prev) => Math.min(prev, effectiveDuration));
+  }, [editingSlide?.duration]);
+
+  useEffect(() => {
+    if (!editingSlide) return;
+    setTimelinePosition(0);
+    setIsPlaying(false);
+  }, [editingSlide?.id]);
+
+  useEffect(() => {
+    if (!editingSlide || !isPlaying) return;
+    const effectiveDuration = getEffectiveDuration(editingSlide);
+
+    const tickMs = 33;
+    const step = tickMs / 1000;
+    const intervalId = window.setInterval(() => {
+      setTimelinePosition((prev) => {
+        const next = prev + step;
+        if (next >= effectiveDuration) {
+          setIsPlaying(false);
+          return effectiveDuration;
+        }
+        return next;
+      });
+    }, tickMs);
+
+    return () => window.clearInterval(intervalId);
+  }, [editingSlide, isPlaying]);
+
 
   if (!project) {
     return (
@@ -130,120 +85,58 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     );
   }
 
-  const getFileIcon = (type: string) => {
-    switch (type) {
-      case "video": return "🎥";
-      case "image": return "🖼️";
-      default: return "📄";
-    }
+  // 슬라이드 편집 시작
+  const handleEditSlide = (slide: Slide) => {
+    setEditingSlide({ ...slide });
+    setSelectedMediaName(null);
+    setTimelinePosition(0); // 타임라인 리셋
+    setIsPlaying(false);
   };
 
-  // 페이지 편집 시작
-  const handleEditPage = (page: Page) => {
-    setEditingPage({ ...page });
-    setSelectedMediaId(null);
-  };
-
-  // 새 페이지 생성
-  const handleCreatePage = () => {
-    const newPage: Page = {
-      id: `page_${Date.now()}`,
-      name: `페이지 ${pages.length + 1}`,
+  // 새 슬라이드 생성
+  const handleCreateSlide = () => {
+    const newSlide: Slide = {
+      id: `slide_${Date.now()}`,
+      name: `슬라이드 ${slides.length + 1}`,
+      projectId: project.id,
+      projectName: project.name,
       backgroundColor: "#FFFFFF",
       text: "",
       fontSize: 32,
       textColor: "#000000",
+      textPositionX: 50,
+      textPositionY: 50,
+      resolutionWidth: 1920,
+      resolutionHeight: 1080,
+      duration: 10, // 기본 10초
     };
-    setEditingPage(newPage);
+    setEditingSlide(newSlide);
+    setTimelinePosition(0); // 타임라인 리셋
+    setIsPlaying(false);
   };
 
-  // 페이지 저장
-  const handleSavePage = () => {
-    if (!editingPage) return;
+  // 슬라이드 저장
+  const handleSaveSlide = () => {
+    if (!editingSlide) return;
 
-    const existingIndex = pages.findIndex(p => p.id === editingPage.id);
+    const existingIndex = slides.findIndex(s => s.id === editingSlide.id);
     if (existingIndex >= 0) {
-      // 기존 페이지 수정
-      const updated = [...pages];
-      updated[existingIndex] = editingPage;
-      setPages(updated);
+      // 기존 슬라이드 수정
+      const updated = [...slides];
+      updated[existingIndex] = editingSlide;
+      setSlides(updated);
     } else {
-      // 새 페이지 추가
-      setPages([...pages, editingPage]);
+      // 새 슬라이드 추가
+      setSlides([...slides, editingSlide]);
     }
-    setEditingPage(null);
+    setEditingSlide(null);
+    setIsPlaying(false);
   };
 
-  // 페이지 편집 취소
-  const handleCancelEditPage = () => {
-    setEditingPage(null);
-  };
-
-  // 플레이리스트 편집 모달 열기
-  const handleOpenPlaylistModal = (playlist: Playlist) => {
-    setEditingPlaylist({ ...playlist });
-    setSelectedPageIndex(0);
-  };
-
-  // 플레이리스트 편집 취소
-  const handleCancelEditPlaylist = () => {
-    setEditingPlaylist(null);
-    setSelectedPageIndex(0);
-  };
-
-  // 플레이리스트 편집 내용 적용
-  const handleApplyEditPlaylist = () => {
-    if (!editingPlaylist) return;
-    const updatedPlaylists = playlists.map(pl =>
-      pl.id === editingPlaylist.id ? editingPlaylist : pl
-    );
-    setPlaylists(updatedPlaylists);
-    setEditingPlaylist(null);
-  };
-
-  // 페이지를 플레이리스트에 추가 (드래그앤드랍)
-  const handleDropPageToPlaylist = (pageId: string, targetIndex?: number) => {
-    if (!editingPlaylist) return;
-
-    // 이미 존재하는지 확인
-    if (editingPlaylist.pageIds.includes(pageId)) return;
-
-    const newPageIds = [...editingPlaylist.pageIds];
-    if (targetIndex !== undefined) {
-      newPageIds.splice(targetIndex, 0, pageId);
-    } else {
-      newPageIds.push(pageId);
-    }
-
-    setEditingPlaylist({
-      ...editingPlaylist,
-      pageIds: newPageIds
-    });
-  };
-
-  // 플레이리스트에서 페이지 제거
-  const handleRemovePageFromPlaylist = (index: number) => {
-    if (!editingPlaylist) return;
-    const newPageIds = editingPlaylist.pageIds.filter((_, i) => i !== index);
-    setEditingPlaylist({
-      ...editingPlaylist,
-      pageIds: newPageIds
-    });
-    if (selectedPageIndex >= newPageIds.length) {
-      setSelectedPageIndex(Math.max(0, newPageIds.length - 1));
-    }
-  };
-
-  // 플레이리스트 내 순서 변경
-  const handleReorderPlaylist = (fromIndex: number, toIndex: number) => {
-    if (!editingPlaylist) return;
-    const newPageIds = [...editingPlaylist.pageIds];
-    const [removed] = newPageIds.splice(fromIndex, 1);
-    newPageIds.splice(toIndex, 0, removed);
-    setEditingPlaylist({
-      ...editingPlaylist,
-      pageIds: newPageIds
-    });
+  // 슬라이드 편집 취소
+  const handleCancelEditSlide = () => {
+    setEditingSlide(null);
+    setIsPlaying(false);
   };
 
   return (
@@ -268,146 +161,111 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           <div className="flex items-start gap-3">
             <span className="text-2xl">💡</span>
             <div className="flex-1">
-              <h3 className="font-semibold text-gray-800 mb-1">페이지 & 플레이리스트</h3>
+              <h3 className="font-semibold text-gray-800 mb-1">프로젝트 슬라이드 관리</h3>
               <p className="text-sm text-gray-600">
-                <strong>페이지</strong>를 클릭하여 배경색, 텍스트, 미디어를 편집하세요.
-                <strong>플레이리스트</strong>를 클릭하여 페이지의 배치와 순서를 조정하세요.
+                이 프로젝트의 <strong>슬라이드</strong>를 생성하고 편집하세요.
+                생성된 슬라이드는 플레이리스트 메뉴에서 조합할 수 있습니다.
               </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 2단 레이아웃: 플레이리스트 | 페이지 */}
+      {/* 슬라이드 목록 */}
       <div className="flex gap-4 h-[calc(100vh-300px)]">
-        {/* 좌측: 플레이리스트 목록 */}
-        <div className="w-1/2 bg-white rounded-lg shadow overflow-hidden flex flex-col">
-          <div className="bg-gray-100 px-4 py-3 border-b flex items-center justify-between">
-            <h2 className="font-semibold text-gray-800">플레이리스트 ({playlists.length})</h2>
-            <button className="px-3 py-1.5 bg-purple-500 text-white text-sm rounded hover:bg-purple-600">
-              + 플레이리스트
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {playlists.length === 0 ? (
-              <div className="flex items-center justify-center h-full text-gray-400">
-                플레이리스트가 없습니다
-              </div>
-            ) : (
-              playlists.map((playlist) => (
-                <div
-                  key={playlist.id}
-                  onClick={() => handleOpenPlaylistModal(playlist)}
-                  className="border-2 rounded-lg cursor-pointer transition-all border-gray-200 bg-white hover:border-cyan-400 hover:bg-cyan-50 p-4"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl">📺</span>
-                      <div>
-                        <h3 className="font-bold text-gray-800">{playlist.name}</h3>
-                        <p className="text-xs text-gray-500">{playlist.template}</p>
-                      </div>
-                    </div>
-                    <span className="text-sm text-gray-500">
-                      {playlist.pageIds.length}개
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* 우측: 페이지 목록 */}
-        <div className="w-1/2 bg-white rounded-lg shadow overflow-hidden flex flex-col">
-          <div className="bg-gray-100 px-4 py-3 border-b flex items-center justify-between">
-            <h2 className="font-semibold text-gray-800">페이지 ({pages.length})</h2>
+        <div className="w-full bg-white rounded-lg shadow overflow-hidden flex flex-col">
+          <div className="bg-gray-100 px-4 py-2 border-b flex items-center justify-between">
+            <h2 className="font-semibold text-gray-800 text-sm">슬라이드 ({slides.length})</h2>
             <button
-              onClick={handleCreatePage}
-              className="px-3 py-1.5 bg-green-500 text-white text-sm rounded hover:bg-green-600"
+              onClick={handleCreateSlide}
+              className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600"
             >
-              + 페이지
+              + 슬라이드
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4">
-            {pages.length === 0 ? (
+          <div className="flex-1 overflow-y-auto p-3">
+            {slides.length === 0 ? (
               <div className="flex items-center justify-center h-full text-gray-400">
-                페이지가 없습니다
+                슬라이드가 없습니다
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
-                {pages.map((page) => {
-                  const media = page.mediaFileId ? project.media.find(m => m.id === page.mediaFileId) : null;
+              <div className="grid grid-cols-3 gap-3 xl:grid-cols-4">
+                {slides.map((slide) => {
+                  const fileName = slide.image || slide.video;
+                  const media = fileName ? project.media.find(m => m.name === fileName) : null;
 
                   return (
                     <div
-                      key={page.id}
-                      onClick={() => handleEditPage(page)}
+                      key={slide.id}
+                      onClick={() => handleEditSlide(slide)}
                       className="group bg-white rounded-lg border-2 shadow-sm cursor-pointer transition-all hover:shadow-lg border-gray-200 hover:border-green-400 overflow-hidden"
                     >
                       {/* 16:9 미리보기 */}
                       <div
                         className="aspect-video relative flex items-center justify-center"
-                        style={{ backgroundColor: page.backgroundColor }}
+                        style={{ backgroundColor: slide.backgroundColor }}
                       >
                         {/* 미디어 배경 */}
-                        {page.mediaFileId && media && (
+                        {(slide.image || slide.video) && media && (
                           <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-7xl opacity-20">{getFileIcon(media.type)}</span>
+                            <span className="text-5xl opacity-20">{getFileIcon(media.type)}</span>
                           </div>
                         )}
 
                         {/* 텍스트 오버레이 */}
-                        {page.text && (
+                        {slide.text && (
                           <div
-                            className="absolute inset-0 flex items-center justify-center p-4 text-center"
+                            className="absolute inset-0 flex items-center justify-center p-3 text-center"
                             style={{
-                              color: page.textColor || "#000000",
-                              fontSize: `${Math.min(page.fontSize || 32, 24)}px`,
+                              color: slide.textColor || "#000000",
+                              fontSize: `${Math.min(slide.fontSize || 32, 24)}px`,
                               fontWeight: "bold",
                               lineHeight: "1.2",
                             }}
                           >
                             <div className="line-clamp-4">
-                              {page.text}
+                              {slide.text}
                             </div>
                           </div>
                         )}
 
-                        {/* 빈 페이지 */}
-                        {!page.text && !page.mediaFileId && (
+                        {/* 빈 슬라이드 */}
+                        {!slide.text && !slide.image && !slide.video && (
                           <div className="text-gray-300 text-center">
-                            <span className="text-6xl">📄</span>
+                            <span className="text-5xl">📄</span>
                           </div>
                         )}
 
                         {/* 호버 오버레이 */}
                         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
-                          <div className="bg-white bg-opacity-90 px-4 py-2 rounded-lg">
-                            <span className="text-sm font-semibold text-gray-800">편집하기</span>
+                          <div className="bg-white bg-opacity-90 px-3 py-1.5 rounded-lg">
+                            <span className="text-xs font-semibold text-gray-800">편집하기</span>
                           </div>
                         </div>
                       </div>
 
                       {/* 정보 */}
-                      <div className="p-3 bg-white border-t">
-                        <h3 className="font-bold text-sm text-gray-800 truncate mb-1">{page.name}</h3>
+                      <div className="p-2 bg-white border-t">
+                        <h3 className="font-bold text-xs text-gray-800 truncate mb-1">{slide.name}</h3>
                         {media && (
-                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <div className="flex items-center gap-2 text-[11px] text-gray-500">
                             <span className="truncate">{media.name}</span>
-                            {media.duration && (
+                            {media.durationSeconds && (
                               <>
                                 <span>•</span>
-                                <span>{media.duration}</span>
+                                <span>{formatDurationSeconds(media.durationSeconds)}</span>
                               </>
                             )}
                           </div>
                         )}
-                        {!media && page.text && (
-                          <p className="text-xs text-gray-500 truncate">텍스트 페이지</p>
+                        {!media && slide.text && (
+                          <p className="text-[11px] text-gray-500 truncate">텍스트 슬라이드</p>
                         )}
+                        <div className="mt-1 flex items-center gap-2 text-[11px]">
+                          <span className="text-gray-500">재생:</span>
+                          <span className="font-semibold text-blue-600">{slide.duration}초</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -418,24 +276,24 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         </div>
       </div>
 
-      {/* 페이지 편집 모달 */}
-      {editingPage && (
+      {/* 슬라이드 편집 모달 */}
+      {editingSlide && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col">
             {/* 모달 헤더 */}
             <div className="px-6 py-4 border-b flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-800">
-                페이지 편집
+                슬라이드 편집
               </h2>
               <div className="flex gap-3">
                 <button
-                  onClick={handleCancelEditPage}
+                  onClick={handleCancelEditSlide}
                   className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                 >
                   취소
                 </button>
                 <button
-                  onClick={handleSavePage}
+                  onClick={handleSaveSlide}
                   className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold"
                 >
                   저장
@@ -445,497 +303,446 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
             {/* 모달 본문 */}
             <div className="flex-1 flex overflow-hidden">
-              {/* 좌측: 미디어 라이브러리 */}
-              <div className="w-80 border-r flex flex-col bg-gray-50">
-                <div className="bg-white px-4 py-3 border-b">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-semibold text-gray-700">미디어</h3>
-                    <button className="px-3 py-1 bg-cyan-500 text-white text-xs rounded hover:bg-cyan-600 font-medium">
-                      + 가져오기
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="미디어 검색..."
-                      className="w-full px-3 py-1.5 pr-8 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    />
-                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
-                      🔍
-                    </span>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="grid grid-cols-3 gap-3">
-                    {project.media.map((media) => (
-                      <div
-                        key={media.id}
-                        draggable
-                        onDragStart={() => setSelectedMediaId(media.id)}
-                        onClick={() => setSelectedMediaId(media.id)}
-                        className={`flex flex-col items-center p-3 rounded-lg cursor-move transition-all ${
-                          selectedMediaId === media.id
-                            ? "bg-blue-100 ring-2 ring-blue-500"
-                            : "bg-white hover:bg-gray-100"
-                        }`}
-                      >
-                        <div className="text-5xl mb-2">{getFileIcon(media.type)}</div>
-                        <div className="text-xs font-medium text-gray-800 text-center truncate w-full px-1">
-                          {media.name}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">{media.size}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 하단: 선택된 미디어 상세정보 */}
-                {selectedMediaId && (() => {
-                  const selectedMedia = project.media.find(m => m.id === selectedMediaId);
-                  if (!selectedMedia) return null;
-                  return (
-                    <div className="border-t bg-white p-4">
-                      <div className="flex items-start gap-3 mb-3">
-                        <div className="text-4xl">{getFileIcon(selectedMedia.type)}</div>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-semibold text-sm text-gray-800 mb-1 break-words">
-                            {selectedMedia.name}
-                          </h4>
-                          <div className="space-y-1 text-xs text-gray-600">
-                            <div className="flex justify-between">
-                              <span>타입:</span>
-                              <span className="font-medium">{selectedMedia.type === "video" ? "동영상" : "이미지"}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>크기:</span>
-                              <span className="font-medium">{selectedMedia.size}</span>
-                            </div>
-                            {selectedMedia.duration && (
+              <MediaLibraryPanel
+                media={project.media}
+                selectedMediaName={selectedMediaName}
+                onSelect={setSelectedMediaName}
+                footer={
+                  selectedMediaName && (() => {
+                    const selectedMedia = project.media.find(m => m.name === selectedMediaName);
+                    if (!selectedMedia) return null;
+                    return (
+                      <div className="border-t bg-white p-4">
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="text-4xl">{getFileIcon(selectedMedia.type)}</div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-sm text-gray-800 mb-1 break-words">
+                              {selectedMedia.name}
+                            </h4>
+                            <div className="space-y-1 text-xs text-gray-600">
+                              <div className="flex justify-between">
+                                <span>타입:</span>
+                                <span className="font-medium">{selectedMedia.type === "video" ? "동영상" : "이미지"}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>크기:</span>
+                                <span className="font-medium">{selectedMedia.size}</span>
+                              </div>
+                            {selectedMedia.durationSeconds && (
                               <div className="flex justify-between">
                                 <span>재생시간:</span>
-                                <span className="font-medium">{selectedMedia.duration}</span>
+                                <span className="font-medium">{formatDurationSeconds(selectedMedia.durationSeconds)}</span>
                               </div>
                             )}
-                            <div className="flex justify-between">
-                              <span>업로드:</span>
-                              <span className="font-medium">{selectedMedia.uploadDate}</span>
+                              <div className="flex justify-between">
+                                <span>업로드:</span>
+                                <span className="font-medium">{selectedMedia.uploadDate}</span>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="text-xs text-gray-500 text-center pt-2 border-t">
-                        💡 캔버스로 드래그하여 적용하세요
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* 중앙: 캔버스 미리보기 */}
-              <div className="flex-1 flex flex-col bg-gray-100 items-center justify-center p-8">
-                <div
-                  className="w-full max-w-4xl aspect-video rounded-lg shadow-2xl flex items-center justify-center relative overflow-hidden"
-                  style={{ backgroundColor: editingPage.backgroundColor }}
-                  onDragOver={(e) => {
-                    if (selectedMediaId) {
-                      e.preventDefault();
-                    }
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (selectedMediaId) {
-                      setEditingPage({ ...editingPage, mediaFileId: selectedMediaId });
-                    }
-                  }}
-                >
-                  {editingPage.mediaFileId && (() => {
-                    const media = project.media.find(m => m.id === editingPage.mediaFileId);
-                    if (!media) return null;
-                    return (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-9xl opacity-30">{getFileIcon(media.type)}</span>
-                      </div>
-                    );
-                  })()}
-
-                  {editingPage.text && (
-                    <div
-                      className="absolute inset-0 flex items-center justify-center p-8 text-center whitespace-pre-wrap"
-                      style={{
-                        color: editingPage.textColor || "#000000",
-                        fontSize: `${editingPage.fontSize || 32}px`,
-                        fontWeight: "bold",
-                      }}
-                    >
-                      {editingPage.text}
-                    </div>
-                  )}
-
-                  {!editingPage.text && !editingPage.mediaFileId && (
-                    <div className="text-gray-400 text-center">
-                      <p className="text-lg mb-2">빈 캔버스</p>
-                      <p className="text-sm">왼쪽에서 미디어를 선택하거나<br />우측에서 텍스트를 입력하세요</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 우측: 편집 도구 */}
-              <div className="w-80 border-l flex flex-col">
-                <div className="bg-gray-50 px-4 py-3 border-b">
-                  <h3 className="font-semibold text-gray-700">편집</h3>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                  {/* 페이지 이름 */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      페이지 이름
-                    </label>
-                    <input
-                      type="text"
-                      value={editingPage.name}
-                      onChange={(e) => setEditingPage({ ...editingPage, name: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded"
-                    />
-                  </div>
-
-                  {/* 배경색 */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      배경색
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="color"
-                        value={editingPage.backgroundColor}
-                        onChange={(e) => setEditingPage({ ...editingPage, backgroundColor: e.target.value })}
-                        className="w-16 h-10 rounded border border-gray-300 cursor-pointer"
-                      />
-                      <input
-                        type="text"
-                        value={editingPage.backgroundColor}
-                        onChange={(e) => setEditingPage({ ...editingPage, backgroundColor: e.target.value })}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded"
-                      />
-                    </div>
-                  </div>
-
-                  {/* 텍스트 */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      텍스트
-                    </label>
-                    <textarea
-                      value={editingPage.text || ""}
-                      onChange={(e) => setEditingPage({ ...editingPage, text: e.target.value })}
-                      placeholder="텍스트를 입력하세요..."
-                      className="w-full h-32 px-3 py-2 border border-gray-300 rounded resize-none"
-                    />
-                  </div>
-
-                  {/* 텍스트 색상 */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      텍스트 색상
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="color"
-                        value={editingPage.textColor || "#000000"}
-                        onChange={(e) => setEditingPage({ ...editingPage, textColor: e.target.value })}
-                        className="w-16 h-10 rounded border border-gray-300 cursor-pointer"
-                      />
-                      <input
-                        type="text"
-                        value={editingPage.textColor || "#000000"}
-                        onChange={(e) => setEditingPage({ ...editingPage, textColor: e.target.value })}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded"
-                      />
-                    </div>
-                  </div>
-
-                  {/* 폰트 크기 */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      폰트 크기: {editingPage.fontSize || 32}px
-                    </label>
-                    <input
-                      type="range"
-                      min="16"
-                      max="120"
-                      value={editingPage.fontSize || 32}
-                      onChange={(e) => setEditingPage({ ...editingPage, fontSize: Number(e.target.value) })}
-                      className="w-full"
-                    />
-                  </div>
-
-                  {/* 미디어 제거 버튼 */}
-                  {editingPage.mediaFileId && (
-                    <div>
-                      <button
-                        onClick={() => setEditingPage({ ...editingPage, mediaFileId: undefined })}
-                        className="w-full px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-                      >
-                        미디어 제거
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 플레이리스트 편집 모달 (배치만) */}
-      {editingPlaylist && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col">
-            {/* 모달 헤더 */}
-            <div className="px-6 py-4 border-b flex items-center justify-between">
-              <h2 className="text-xl font-bold text-gray-800">
-                {editingPlaylist.name} - 배치
-              </h2>
-              <div className="flex gap-3">
-                <button
-                  onClick={handleCancelEditPlaylist}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                >
-                  취소
-                </button>
-                <button
-                  onClick={handleApplyEditPlaylist}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold"
-                >
-                  적용
-                </button>
-              </div>
-            </div>
-
-            {/* 모달 본문 */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* 상단: 미리보기 영역 */}
-              <div className="h-[40%] bg-gradient-to-b from-gray-900 to-gray-800 flex items-center justify-center p-6">
-                {editingPlaylist.pageIds.length === 0 ? (
-                  <div className="text-center text-gray-400">
-                    <p className="text-lg mb-2">페이지를 추가하세요</p>
-                    <p className="text-sm">아래에서 페이지를 드래그하여<br />하단 플레이리스트에 추가하세요</p>
-                  </div>
-                ) : (
-                  (() => {
-                    const currentPageId = editingPlaylist.pageIds[selectedPageIndex];
-                    const currentPage = pages.find(p => p.id === currentPageId);
-
-                    if (!currentPage) return <div className="text-gray-400">페이지를 찾을 수 없습니다</div>;
-
-                    return (
-                      <div
-                        className="w-full max-w-5xl aspect-video rounded-lg shadow-2xl flex items-center justify-center relative overflow-hidden"
-                        style={{ backgroundColor: currentPage.backgroundColor }}
-                      >
-                        {currentPage.mediaFileId && (() => {
-                          const media = project.media.find(m => m.id === currentPage.mediaFileId);
-                          if (!media) return null;
-                          return (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <span className="text-9xl opacity-30">{getFileIcon(media.type)}</span>
-                            </div>
-                          );
-                        })()}
-
-                        {currentPage.text && (
-                          <div
-                            className="absolute inset-0 flex items-center justify-center p-8 text-center whitespace-pre-wrap"
-                            style={{
-                              color: currentPage.textColor || "#000000",
-                              fontSize: `${currentPage.fontSize || 32}px`,
-                              fontWeight: "bold",
-                            }}
-                          >
-                            {currentPage.text}
-                          </div>
-                        )}
+                        <div className="text-xs text-gray-500 text-center pt-2 border-t">
+                          💡 캔버스로 드래그하여 적용하세요
+                        </div>
                       </div>
                     );
                   })()
-                )}
-              </div>
+                }
+              />
 
-              {/* 중앙: 페이지 라이브러리 (그리드뷰, 파일 탐색기 느낌) */}
-              <div className="flex-1 border-t border-b bg-gray-50 overflow-hidden flex flex-col">
-                <div className="bg-white px-4 py-3 border-b">
-                  <h3 className="font-semibold text-gray-700">페이지 라이브러리</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">드래그하여 하단 플레이리스트에 추가</p>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="grid grid-cols-4 gap-3">
-                    {pages.map((page) => {
-                      const media = page.mediaFileId ? project.media.find(m => m.id === page.mediaFileId) : null;
-                      const isUsed = editingPlaylist.pageIds.includes(page.id);
-
-                      return (
-                        <div
-                          key={page.id}
-                          draggable
-                          onDragStart={() => setDraggedPageId(page.id)}
-                          onDragEnd={() => setDraggedPageId(null)}
-                          className={`group bg-white rounded-lg border shadow-sm cursor-move transition-all hover:shadow-md ${
-                            isUsed
-                              ? "border-gray-300 opacity-40"
-                              : "border-gray-200 hover:border-blue-400"
-                          }`}
-                        >
-                          {/* 썸네일 */}
-                          <div
-                            className="aspect-video rounded-t-lg flex items-center justify-center"
-                            style={{ backgroundColor: page.backgroundColor }}
-                          >
-                            {page.mediaFileId ? (
-                              <span className="text-5xl">{getFileIcon(media?.type || "")}</span>
-                            ) : page.text ? (
-                              <span className="text-5xl">📝</span>
-                            ) : (
-                              <span className="text-5xl text-gray-300">📄</span>
-                            )}
-                          </div>
-
-                          {/* 정보 */}
-                          <div className="p-3 border-t">
-                            <h4 className="font-semibold text-sm text-gray-800 truncate mb-1">{page.name}</h4>
-                            {media && (
-                              <div className="space-y-0.5">
-                                <p className="text-xs text-gray-600 truncate">{media.name}</p>
-                                <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                                  <span>{media.size}</span>
-                                  {media.duration && (
-                                    <>
-                                      <span>•</span>
-                                      <span>{media.duration}</span>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            {page.text && !media && (
-                              <p className="text-xs text-gray-500 line-clamp-2">{page.text}</p>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+              {/* 중앙 + 우측 영역 */}
+              <div className="flex-1 flex">
+                {/* 중앙: 캔버스 미리보기 */}
+                <div className="flex-1 flex flex-col bg-gray-100 items-center justify-center p-8">
+                  {/* 슬라이드 이름 */}
+                  <div className="w-full max-w-4xl mb-3">
+                    <input
+                      type="text"
+                      value={editingSlide.name}
+                      onChange={(e) => setEditingSlide({ ...editingSlide, name: e.target.value })}
+                      className="text-lg font-semibold text-gray-800 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-cyan-500 focus:outline-none px-2 py-1 w-full"
+                      placeholder="슬라이드 이름"
+                    />
                   </div>
-                </div>
-              </div>
 
-              {/* 하단: 플레이리스트 타임라인 (가로 스크롤) */}
-              <div className="h-48 bg-white border-t flex flex-col">
-                <div className="px-4 py-2 bg-gray-50 border-b flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-700">플레이리스트 순서</h3>
-                  <span className="text-sm text-gray-500">{editingPlaylist.pageIds.length}개 페이지</span>
-                </div>
-                <div
-                  className="flex-1 overflow-x-auto overflow-y-hidden p-4"
-                  onDragOver={(e) => {
-                    if (draggedPageId || draggedPlaylistIndex !== null) {
-                      e.preventDefault();
+                  {/* 캔버스 미리보기 */}
+                  <SlideCanvas
+                    slide={editingSlide}
+                    media={project.media}
+                    selectedMediaName={selectedMediaName}
+                    timelinePosition={timelinePosition}
+                    onApplyMedia={(mediaName) => {
+                      const selected = project.media.find((item) => item.name === mediaName);
+                      if (!selected) return;
+                      setEditingSlide((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              image: selected.type === "image" ? mediaName : undefined,
+                              video: selected.type === "video" ? mediaName : undefined,
+                              duration: selected.type === "video" && selected.durationSeconds
+                                ? selected.durationSeconds
+                                : prev.duration,
+                            }
+                          : prev
+                      );
+                    }}
+                    onUpdateSlide={(updater) =>
+                      setEditingSlide((prev) => (prev ? updater(prev) : prev))
                     }
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (draggedPageId) {
-                      handleDropPageToPlaylist(draggedPageId);
-                      setDraggedPageId(null);
-                    }
-                  }}
-                >
-                  <div className="flex gap-3 h-full min-w-max">
-                    {editingPlaylist.pageIds.length === 0 ? (
-                      <div className="flex items-center justify-center min-w-[300px] h-full border-2 border-dashed border-gray-300 rounded-lg">
-                        <p className="text-gray-400 text-sm text-center px-4">
-                          페이지를 드래그하여 추가하세요
-                        </p>
-                      </div>
-                    ) : (
-                      editingPlaylist.pageIds.map((pageId, index) => {
-                        const page = pages.find(p => p.id === pageId);
-                        if (!page) return null;
+                    onRequestEditPanel={() => setShowEditPanel(true)}
+                  />
 
-                        const media = page.mediaFileId ? project.media.find(m => m.id === page.mediaFileId) : null;
-
-                        return (
-                          <div
-                            key={`${pageId}-${index}`}
-                            draggable
-                            onDragStart={() => setDraggedPlaylistIndex(index)}
-                            onDragOver={(e) => {
-                              if (draggedPlaylistIndex !== null && draggedPlaylistIndex !== index) {
-                                e.preventDefault();
-                              }
-                              if (draggedPageId) {
-                                e.preventDefault();
-                              }
-                            }}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (draggedPlaylistIndex !== null && draggedPlaylistIndex !== index) {
-                                handleReorderPlaylist(draggedPlaylistIndex, index);
-                                setDraggedPlaylistIndex(null);
-                              } else if (draggedPageId) {
-                                handleDropPageToPlaylist(draggedPageId, index);
-                                setDraggedPageId(null);
-                              }
-                            }}
-                            onDragEnd={() => setDraggedPlaylistIndex(null)}
-                            onClick={() => setSelectedPageIndex(index)}
-                            className={`relative flex-shrink-0 w-40 h-full cursor-move transition-all ${
-                              selectedPageIndex === index
-                                ? "ring-4 ring-blue-500"
-                                : "hover:ring-2 hover:ring-gray-300"
-                            }`}
-                          >
-                            <div className="bg-white border-2 border-gray-200 rounded-lg p-2 h-full flex flex-col">
-                              {/* 번호 배지 */}
-                              <div className="absolute -top-2 -left-2 w-7 h-7 bg-black text-white rounded-full flex items-center justify-center text-sm font-bold shadow-lg z-10">
-                                {index + 1}
-                              </div>
-
-                              {/* 삭제 버튼 */}
+                  {/* 타임라인 슬라이더 */}
+                  <div className="w-full max-w-4xl mt-4 bg-white rounded-lg p-4 shadow">
+                    {(() => {
+                      const effectiveDuration = getEffectiveDuration(editingSlide);
+                      return (
+                        <>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium text-gray-700">타임라인 미리보기</span>
+                            <div className="flex items-center gap-2">
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemovePageFromPlaylist(index);
-                                }}
-                                className="absolute -top-2 -right-2 w-7 h-7 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 shadow-lg z-10"
+                                onClick={() => setIsPlaying((prev) => !prev)}
+                                className="px-2.5 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
                               >
-                                ✕
+                                {isPlaying ? "⏸️" : "▶️"}
                               </button>
-
-                              {/* 썸네일 */}
-                              <div
-                                className="aspect-video rounded flex items-center justify-center mb-2"
-                                style={{ backgroundColor: page.backgroundColor }}
+                              <button
+                                onClick={() => {
+                                  setIsPlaying(false);
+                                  setTimelinePosition(0);
+                                }}
+                                className="px-2.5 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
                               >
-                                {page.mediaFileId ? (
-                                  <span className="text-4xl">{getFileIcon(media?.type || "")}</span>
-                                ) : page.text ? (
-                                  <span className="text-4xl">📝</span>
-                                ) : (
-                                  <span className="text-4xl text-gray-300">📄</span>
-                                )}
-                              </div>
-
-                              {/* 이름 */}
-                              <div className="text-xs font-medium text-gray-800 truncate text-center">
-                                {page.name}
-                              </div>
+                                ⏹️
+                              </button>
+                              <span className="text-sm text-gray-600">
+                                {timelinePosition.toFixed(1)}s / {effectiveDuration}s
+                              </span>
                             </div>
                           </div>
-                        );
-                      })
-                    )}
+                          <input
+                            type="range"
+                            min="0"
+                            max={effectiveDuration}
+                            step="0.05"
+                            value={timelinePosition}
+                            onChange={(e) => {
+                              setIsPlaying(false);
+                              setTimelinePosition(Number(e.target.value));
+                            }}
+                            className="w-full"
+                          />
+                          <div className="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>0s</span>
+                            <span>{(effectiveDuration / 2).toFixed(1)}s</span>
+                            <span>{effectiveDuration}s</span>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
+
+                {/* 우측: 편집 패널 (조건부 표시) */}
+                {showEditPanel && (
+                  <div className="w-80 border-l flex flex-col bg-white">
+                    <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
+                      <h3 className="font-semibold text-gray-700">편집</h3>
+                      <button
+                        onClick={() => setShowEditPanel(false)}
+                        className="text-gray-500 hover:text-gray-700"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                      {/* 재생 시간 */}
+                      <div>
+                        {(() => {
+                          const mediaName = editingSlide.video || editingSlide.image;
+                          const media = mediaName
+                            ? project.media.find((m) => m.name === mediaName)
+                            : null;
+                          const mediaSeconds = media?.durationSeconds ?? null;
+                          const isVideoLocked = Boolean(editingSlide.video && mediaSeconds);
+                          const displaySeconds = isVideoLocked ? mediaSeconds : editingSlide.duration;
+
+                          return (
+                            <>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                재생 시간: {displaySeconds}초
+                                {isVideoLocked && (
+                                  <span className="ml-2 text-xs text-gray-400">(동영상 길이에 고정)</span>
+                                )}
+                              </label>
+                              <input
+                                type="range"
+                                min="1"
+                                max="60"
+                                value={displaySeconds}
+                                disabled={isVideoLocked}
+                                onChange={(e) => {
+                                  const newDuration = Number(e.target.value);
+                                  setEditingSlide({ ...editingSlide, duration: newDuration });
+                                  if (timelinePosition > newDuration) {
+                                    setTimelinePosition(newDuration);
+                                  }
+                                }}
+                                className={`w-full ${isVideoLocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                              />
+                              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>1초</span>
+                                <span>60초</span>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+
+                      {/* 배경색 */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          배경색
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="color"
+                            value={editingSlide.backgroundColor}
+                            onChange={(e) => setEditingSlide({ ...editingSlide, backgroundColor: e.target.value })}
+                            className="w-16 h-10 rounded border border-gray-300 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={editingSlide.backgroundColor}
+                            onChange={(e) => setEditingSlide({ ...editingSlide, backgroundColor: e.target.value })}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 해상도 */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          해상도 (px)
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            value={editingSlide.resolutionWidth || 1920}
+                            onChange={(e) => setEditingSlide({
+                              ...editingSlide,
+                              resolutionWidth: Number(e.target.value)
+                            })}
+                            className="w-1/2 px-3 py-2 border border-gray-300 rounded"
+                            placeholder="가로"
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            value={editingSlide.resolutionHeight || 1080}
+                            onChange={(e) => setEditingSlide({
+                              ...editingSlide,
+                              resolutionHeight: Number(e.target.value)
+                            })}
+                            className="w-1/2 px-3 py-2 border border-gray-300 rounded"
+                            placeholder="세로"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 텍스트 */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          텍스트
+                        </label>
+                        <textarea
+                          value={editingSlide.text || ""}
+                          onChange={(e) => setEditingSlide({ ...editingSlide, text: e.target.value })}
+                          placeholder="텍스트를 입력하세요..."
+                          className="w-full h-32 px-3 py-2 border border-gray-300 rounded resize-none"
+                        />
+                      </div>
+
+                      {/* 텍스트 색상 */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          텍스트 색상
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="color"
+                            value={editingSlide.textColor || "#000000"}
+                            onChange={(e) => setEditingSlide({ ...editingSlide, textColor: e.target.value })}
+                            className="w-16 h-10 rounded border border-gray-300 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={editingSlide.textColor || "#000000"}
+                            onChange={(e) => setEditingSlide({ ...editingSlide, textColor: e.target.value })}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 폰트 크기 */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          폰트 크기: {editingSlide.fontSize || 32}px
+                        </label>
+                        <input
+                          type="range"
+                          min="16"
+                          max="120"
+                          value={editingSlide.fontSize || 32}
+                          onChange={(e) => setEditingSlide({ ...editingSlide, fontSize: Number(e.target.value) })}
+                          className="w-full"
+                        />
+                      </div>
+
+                      {/* 텍스트 슬라이딩 이펙트 */}
+                      {editingSlide.text && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              텍스트 슬라이딩 이펙트
+                            </label>
+                            <select
+                              value={editingSlide.textAnimation || "none"}
+                              onChange={(e) => {
+                                const newAnimation = e.target.value as any;
+                                const defaultConfig = getDefaultAnimationConfig(newAnimation, editingSlide.duration);
+                                setEditingSlide({
+                                  ...editingSlide,
+                                  textAnimation: newAnimation,
+                                  textAnimationDuration: defaultConfig.duration,
+                                  textAnimationDelay: defaultConfig.delay,
+                                  textAnimationRepeat: defaultConfig.repeat,
+                                  textAnimationGap: defaultConfig.gap,
+                                  textFadeInDuration: defaultConfig.fadeInDuration,
+                                  textFadeOutDuration: defaultConfig.fadeOutDuration
+                                });
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded"
+                            >
+                              <option value="none">없음 (정적)</option>
+                              <option value="fade-in-out">페이드 인-아웃</option>
+                              <option value="slide-horizontal">가로 스크롤</option>
+                              <option value="slide-vertical">세로 스크롤</option>
+                            </select>
+                          </div>
+
+                          {editingSlide.textAnimation === "fade-in-out" ? (
+                            <>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                  페이드 인 시간 (초)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  max={editingSlide.duration}
+                                  value={editingSlide.textFadeInDuration ?? 0.6}
+                                  onChange={(e) => setEditingSlide({
+                                    ...editingSlide,
+                                    textFadeInDuration: Number(e.target.value)
+                                  })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                  페이드 아웃 시간 (초)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  max={editingSlide.duration}
+                                  value={editingSlide.textFadeOutDuration ?? 0.8}
+                                  onChange={(e) => setEditingSlide({
+                                    ...editingSlide,
+                                    textFadeOutDuration: Number(e.target.value)
+                                  })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded"
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              {(() => {
+                                const repeat = editingSlide.textAnimationRepeat ?? 1;
+                                const duration = editingSlide.duration;
+                                const minLoop = 0.1;
+                                const maxGap = repeat > 1
+                                  ? Math.max(0, (duration - (repeat * minLoop)) / (repeat - 1))
+                                  : duration;
+                                return (
+                                  <>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                  반복 횟수 (0 = 무한 반복)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={editingSlide.textAnimationRepeat ?? 1}
+                                  onChange={(e) => setEditingSlide({
+                                    ...editingSlide,
+                                    textAnimationRepeat: Math.max(0, Number(e.target.value))
+                                  })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                  반복 간격 (초)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  max={repeat > 0 ? maxGap : undefined}
+                                  value={editingSlide.textAnimationGap ?? 0}
+                                  onChange={(e) => setEditingSlide({
+                                    ...editingSlide,
+                                    textAnimationGap: Math.max(0, Math.min(maxGap, Number(e.target.value)))
+                                  })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded"
+                                />
+                              </div>
+                                  </>
+                                );
+                              })()}
+                            </>
+                          )}
+                        </>
+                      )}
+
+                      {/* 미디어 제거 버튼 */}
+                      {(editingSlide.image || editingSlide.video) && (
+                        <div>
+                          <button
+                            onClick={() => setEditingSlide({
+                              ...editingSlide,
+                              image: undefined,
+                              video: undefined
+                            })}
+                            className="w-full px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                          >
+                            미디어 제거
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

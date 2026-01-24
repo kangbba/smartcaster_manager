@@ -1,42 +1,7 @@
 "use client";
 
 import Link from "next/link";
-
-const dummyProjects = [
-  {
-    id: 1,
-    name: "2026 S/S 신상품 런칭",
-    client: "나이키 코리아",
-    mediaCount: 12,
-    playlistCount: 4,
-    totalSize: "248.5 MB",
-    status: "active",
-    createdAt: "2026-01-20",
-    assignedDevices: 15,
-  },
-  {
-    id: 2,
-    name: "설 명절 특가 프로모션",
-    client: "롯데백화점",
-    mediaCount: 8,
-    playlistCount: 3,
-    totalSize: "156.3 MB",
-    status: "active",
-    createdAt: "2026-01-18",
-    assignedDevices: 22,
-  },
-  {
-    id: 3,
-    name: "갤럭시 S26 출시 캠페인",
-    client: "삼성전자",
-    mediaCount: 15,
-    playlistCount: 5,
-    totalSize: "432.8 MB",
-    status: "active",
-    createdAt: "2026-01-15",
-    assignedDevices: 38,
-  },
-];
+import { projectSummaries } from "@/lib/data/projectSummaries";
 
 export default function ProjectsPage() {
   return (
@@ -50,7 +15,7 @@ export default function ProjectsPage() {
 
       {/* 프로젝트 카드 그리드 */}
       <div className="grid grid-cols-3 gap-6">
-        {dummyProjects.map((project) => (
+        {projectSummaries.map((project) => (
           <Link
             key={project.id}
             href={`/dashboard/projects/${project.id}`}
@@ -112,24 +77,24 @@ export default function ProjectsPage() {
       <div className="mt-6 grid grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm text-gray-600">전체 프로젝트</div>
-          <div className="text-2xl font-bold text-gray-800">{dummyProjects.length}</div>
+          <div className="text-2xl font-bold text-gray-800">{projectSummaries.length}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm text-gray-600">활성 프로젝트</div>
           <div className="text-2xl font-bold text-green-600">
-            {dummyProjects.filter((p) => p.status === "active").length}
+            {projectSummaries.filter((p) => p.status === "active").length}
           </div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm text-gray-600">전체 미디어</div>
           <div className="text-2xl font-bold text-cyan-600">
-            {dummyProjects.reduce((sum, p) => sum + p.mediaCount, 0)}
+            {projectSummaries.reduce((sum, p) => sum + p.mediaCount, 0)}
           </div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm text-gray-600">전체 플레이리스트</div>
           <div className="text-2xl font-bold text-purple-600">
-            {dummyProjects.reduce((sum, p) => sum + p.playlistCount, 0)}
+            {projectSummaries.reduce((sum, p) => sum + p.playlistCount, 0)}
           </div>
         </div>
       </div>

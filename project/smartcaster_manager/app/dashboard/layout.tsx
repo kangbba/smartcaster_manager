@@ -56,16 +56,6 @@ export default function DashboardLayout({
                 >
                   단말기 목록
                 </Link>
-                <Link
-                  href="/dashboard/device-groups"
-                  className={`block px-4 py-2 rounded-lg text-sm transition-colors ${
-                    pathname === "/dashboard/device-groups"
-                      ? "bg-cyan-500 text-white"
-                      : "bg-white text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  그룹 관리
-                </Link>
               </div>
             )}
           </div>
@@ -80,6 +70,18 @@ export default function DashboardLayout({
             }`}
           >
             📁 프로젝트
+          </Link>
+
+          {/* 플레이리스트 */}
+          <Link
+            href="/dashboard/playlists"
+            className={`block px-4 py-3 rounded-lg transition-colors ${
+              pathname.startsWith("/dashboard/playlists")
+                ? "bg-cyan-500 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            🎬 플레이리스트
           </Link>
 
           {/* 송출 관리 */}

@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { membersData } from "@/lib/data/members";
+import { devicesData } from "@/lib/data/devices";
 
-type Device = {
+type MemberDevice = {
   uuid: string;
   model: string;
   resolution: string;
@@ -32,7 +34,7 @@ type ApprovedMember = {
   company: string;
   phone: string;
   approvedDate: string;
-  devices: Device[];
+  devices: MemberDevice[];
   lastLoginDate: string;
   status: "active" | "inactive";
 };
@@ -96,100 +98,30 @@ const initialRequests: MemberRequest[] = [
   },
 ];
 
-const initialMembers: ApprovedMember[] = [
-  {
-    id: 101,
-    name: "정대리",
-    email: "dae.jung@example.com",
-    company: "현대백화점 압구정점",
-    phone: "010-1111-2222",
-    approvedDate: "2026-01-15",
-    devices: [
-      { uuid: "LCD-D4E5-1A23-77C8", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-15", lastOnline: "2026-01-22 14:30", status: "online" },
-      { uuid: "LCD-D4E5-1A23-77C9", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-15", lastOnline: "2026-01-22 14:28", status: "online" },
-      { uuid: "LCD-D4E5-1A23-77CA", model: "SmartCaster Ultra 55", resolution: "3840x2160", registeredDate: "2026-01-16", lastOnline: "2026-01-22 14:25", status: "online" },
-      { uuid: "LCD-D4E5-1A23-77CB", model: "SmartCaster Slim 32", resolution: "1366x768", registeredDate: "2026-01-17", lastOnline: "2026-01-21 18:45", status: "offline" },
-      { uuid: "LCD-D4E5-1A23-77CC", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-18", lastOnline: "2026-01-22 14:32", status: "online" },
-    ],
-    lastLoginDate: "2026-01-22",
-    status: "active",
-  },
-  {
-    id: 102,
-    name: "최과장",
-    email: "gj.choi@example.com",
-    company: "삼성전자 강남대리점",
-    phone: "010-3333-4444",
-    approvedDate: "2026-01-10",
-    devices: [
-      { uuid: "LCD-E5F6-2B34-88D9", model: "SmartCaster Ultra 55", resolution: "3840x2160", registeredDate: "2026-01-10", lastOnline: "2026-01-22 15:10", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88DA", model: "SmartCaster Ultra 55", resolution: "3840x2160", registeredDate: "2026-01-10", lastOnline: "2026-01-22 15:08", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88DB", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-11", lastOnline: "2026-01-22 15:05", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88DC", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-11", lastOnline: "2026-01-22 15:12", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88DD", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-12", lastOnline: "2026-01-22 15:03", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88DE", model: "SmartCaster Slim 32", resolution: "1366x768", registeredDate: "2026-01-12", lastOnline: "2026-01-20 12:30", status: "offline" },
-      { uuid: "LCD-E5F6-2B34-88DF", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-13", lastOnline: "2026-01-22 15:15", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88E0", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-13", lastOnline: "2026-01-22 15:11", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88E1", model: "SmartCaster Ultra 55", resolution: "3840x2160", registeredDate: "2026-01-14", lastOnline: "2026-01-22 15:09", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88E2", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-14", lastOnline: "2026-01-22 15:14", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88E3", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2026-01-15", lastOnline: "2026-01-22 15:07", status: "online" },
-      { uuid: "LCD-E5F6-2B34-88E4", model: "SmartCaster Slim 32", resolution: "1366x768", registeredDate: "2026-01-15", lastOnline: "2026-01-21 09:15", status: "offline" },
-    ],
-    lastLoginDate: "2026-01-21",
-    status: "active",
-  },
-  {
-    id: 103,
-    name: "송부장",
-    email: "bj.song@example.com",
-    company: "CU 편의점 본사",
-    phone: "010-5555-6666",
-    approvedDate: "2026-01-05",
-    devices: Array.from({ length: 38 }, (_, i) => ({
-      uuid: `LCD-F6G7-3C45-99${String(i).padStart(2, "0")}`,
-      model: i % 3 === 0 ? "SmartCaster Ultra 55" : i % 3 === 1 ? "SmartCaster Pro 43" : "SmartCaster Slim 32",
-      resolution: i % 3 === 0 ? "3840x2160" : i % 3 === 1 ? "1920x1080" : "1366x768",
-      registeredDate: `2026-01-${String(5 + Math.floor(i / 5)).padStart(2, "0")}`,
-      lastOnline: i % 5 === 0 ? "2026-01-21 10:30" : "2026-01-22 16:20",
-      status: i % 5 === 0 ? "offline" : "online",
-    })),
-    lastLoginDate: "2026-01-20",
-    status: "active",
-  },
-  {
-    id: 104,
-    name: "한실장",
-    email: "sj.han@example.com",
-    company: "GS25 편의점 본사",
-    phone: "010-7777-8888",
-    approvedDate: "2025-12-28",
-    devices: Array.from({ length: 25 }, (_, i) => ({
-      uuid: `LCD-G7H8-4D56-AA${String(i).padStart(2, "0")}`,
-      model: i % 2 === 0 ? "SmartCaster Pro 43" : "SmartCaster Slim 32",
-      resolution: i % 2 === 0 ? "1920x1080" : "1366x768",
-      registeredDate: `2025-12-${String(28 + Math.floor(i / 10)).padStart(2, "0")}`,
-      lastOnline: i % 4 === 0 ? "2026-01-20 08:15" : "2026-01-22 11:45",
-      status: i % 4 === 0 ? "offline" : "online",
-    })),
-    lastLoginDate: "2026-01-15",
-    status: "active",
-  },
-  {
-    id: 105,
-    name: "윤대표",
-    email: "ceo.yoon@example.com",
-    company: "올리브영 강남점",
-    phone: "010-9999-0000",
-    approvedDate: "2025-12-20",
-    devices: [
-      { uuid: "LCD-H8I9-5E67-BB01", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2025-12-20", lastOnline: "2026-01-10 14:20", status: "offline" },
-      { uuid: "LCD-H8I9-5E67-BB02", model: "SmartCaster Slim 32", resolution: "1366x768", registeredDate: "2025-12-21", lastOnline: "2026-01-08 16:30", status: "offline" },
-      { uuid: "LCD-H8I9-5E67-BB03", model: "SmartCaster Pro 43", resolution: "1920x1080", registeredDate: "2025-12-22", lastOnline: "2026-01-09 11:45", status: "offline" },
-    ],
-    lastLoginDate: "2026-01-10",
-    status: "inactive",
-  },
-];
+const initialMembers: ApprovedMember[] = membersData.map((member) => {
+  const devices = devicesData
+    .filter((device) => device.memberId === member.id)
+    .map((device) => ({
+      uuid: device.id,
+      model: device.model || "SmartCaster",
+      resolution: device.resolution || "-",
+      registeredDate: device.registeredDate || "-",
+      lastOnline: device.lastSeen,
+      status: device.status,
+    }));
+
+  return {
+    id: member.id,
+    name: member.name,
+    email: member.email,
+    company: member.company,
+    phone: member.phone,
+    approvedDate: member.approvedDate,
+    devices,
+    lastLoginDate: member.lastLoginDate,
+    status: member.status,
+  };
+});
 
 const initialRejected: RejectedMember[] = [
   {

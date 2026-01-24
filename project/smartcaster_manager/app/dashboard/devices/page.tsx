@@ -1,46 +1,15 @@
 "use client";
 
-// Dummy 데이터
-const dummyDevices = [
-  {
-    id: 1,
-    name: "강남점-3층-A",
-    group: "강남점",
-    status: "online",
-    lastSeen: "2026-01-22 14:30",
-    currentPlaylist: "ABB 샴푸 캠페인",
-    playlistId: "pl_001"
-  },
-  {
-    id: 2,
-    name: "강남점-3층-B",
-    group: "강남점",
-    status: "online",
-    lastSeen: "2026-01-22 14:29",
-    currentPlaylist: "ABB 샴푸 캠페인",
-    playlistId: "pl_001"
-  },
-  {
-    id: 3,
-    name: "홍대점-1층",
-    group: "홍대점",
-    status: "offline",
-    lastSeen: "2026-01-22 10:15",
-    currentPlaylist: "신선식품",
-    playlistId: "pl_002"
-  },
-  {
-    id: 4,
-    name: "홍대점-2층",
-    group: "홍대점",
-    status: "online",
-    lastSeen: "2026-01-22 14:31",
-    currentPlaylist: null,
-    playlistId: null
-  },
-];
+import { useSyncExternalStore } from "react";
+import { devicesData } from "@/lib/data/devices";
+import { getPlaylistSummaries } from "@/lib/data/playlists";
+import { getAssignments, subscribeAssignments } from "@/lib/data/assignmentsStore";
 
 export default function DevicesPage() {
+  const playlistSummaries = getPlaylistSummaries();
+  const playlistById = new Map(playlistSummaries.map((p) => [p.id, p]));
+  const assignmentsData = useSyncExternalStore(subscribeAssignments, getAssignments);
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
@@ -83,7 +52,7 @@ export default function DevicesPage() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {dummyDevices.map((device) => (
+            {devicesData.map((device) => (
               <tr key={device.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4">
                   <span className={`inline-block w-3 h-3 rounded-full ${
@@ -93,12 +62,11 @@ export default function DevicesPage() {
                 <td className="px-6 py-4 font-medium text-gray-800">{device.name}</td>
                 <td className="px-6 py-4 text-gray-600">{device.group}</td>
                 <td className="px-6 py-4">
-                  {device.currentPlaylist ? (
+                  {assignmentsData[device.id] ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-800">{device.currentPlaylist}</span>
-                      <button className="text-xs text-cyan-600 hover:text-cyan-700">
-                        상세 →
-                      </button>
+                      <span className="text-gray-800">
+                        {playlistById.get(assignmentsData[device.id] || 0)?.name ?? "알 수 없음"}
+                      </span>
                     </div>
                   ) : (
                     <span className="text-gray-400">할당 없음</span>
