@@ -1,13 +1,24 @@
 "use client";
 
-import { Project, Slide } from "@/lib/types";
-import { getFileIcon } from "@/lib/utils/fileIcons";
+import type { Slide, MediaFile } from "@/lib/types";
+import SlideThumbnail from "./SlideThumbnail";
+
+type SlideLibraryProject = {
+  id: string;
+  name: string;
+  client?: string;
+};
+
+export type SlideWithMedia = {
+  slide: Slide;
+  media: MediaFile | null;
+};
 
 interface SlideLibraryPanelProps {
-  projects: Project[];
-  slides: Slide[];
-  selectedProjectId: number | null;
-  onSelectProject: (id: number | null) => void;
+  projects: SlideLibraryProject[];
+  slidesWithMedia: SlideWithMedia[];
+  selectedProjectId: string | null;
+  onSelectProject: (id: string | null) => void;
   onDragStart: (slideId: string) => void;
   onDragEnd: () => void;
   isUsed: (slideId: string) => boolean;
@@ -15,7 +26,7 @@ interface SlideLibraryPanelProps {
 
 export default function SlideLibraryPanel({
   projects,
-  slides,
+  slidesWithMedia,
   selectedProjectId,
   onSelectProject,
   onDragStart,
@@ -50,18 +61,13 @@ export default function SlideLibraryPanel({
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
             }`}
           >
-            {project.client}
+            {project.client || project.name}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {slides.map((slide) => {
-          const project = projects.find((p) => p.id === slide.projectId);
-          const fileName = slide.image || slide.video;
-          const media = fileName
-            ? project?.media.find((m) => m.name === fileName)
-            : null;
+        {slidesWithMedia.map(({ slide, media }) => {
           const used = isUsed(slide.id);
 
           return (
@@ -75,16 +81,10 @@ export default function SlideLibraryPanel({
               }`}
             >
               <div
-                className="w-16 h-16 flex-shrink-0 rounded flex items-center justify-center"
+                className="w-24 h-14 flex-shrink-0 rounded overflow-hidden relative"
                 style={{ backgroundColor: slide.backgroundColor }}
               >
-                {slide.image || slide.video ? (
-                  <span className="text-2xl">{getFileIcon(media?.type || "")}</span>
-                ) : slide.text ? (
-                  <span className="text-2xl">📝</span>
-                ) : (
-                  <span className="text-2xl text-gray-300">📄</span>
-                )}
+                <SlideThumbnail slide={slide} media={media} />
               </div>
 
               <div className="flex-1 min-w-0">

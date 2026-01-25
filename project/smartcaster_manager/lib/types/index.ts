@@ -7,12 +7,15 @@
 // Media (미디어 파일)
 // ============================================
 export interface MediaFile {
-  id: number;
+  id: string;
   name: string;
-  type: "video" | "image";
+  type: "video" | "image" | "audio";
   size: string;
   durationSeconds?: number; // 동영상의 경우 (초 단위)
   uploadDate: string;
+  url?: string;
+  bucket?: string;
+  path?: string;
 }
 
 // ============================================
@@ -32,19 +35,35 @@ export interface MediaFile {
 export interface Slide {
   id: string;
   name: string;
-  projectId: number; // 어느 프로젝트에 속한 슬라이드인지
+  projectId: string; // 어느 프로젝트에 속한 슬라이드인지
   projectName: string; // 프로젝트 이름 (플레이리스트에서 표시용)
   backgroundColor: string; // 배경색 (항상 필요)
 
   // 미디어 (파일명으로 참조)
   image?: string; // 이미지 파일명 (예: "Nike_SS2026_MainImage.jpg")
   video?: string; // 영상 파일명 (예: "Nike_SS2026_Hero_30s.mp4")
+  mediaId?: string; // Supabase media.id
+  audio?: string; // 오디오 파일명 (예: "bgm.mp3")
+  audioMediaId?: string; // Supabase media.id (audio)
+  mediaScaleX?: number; // 미디어 X 스케일 (기본 1)
+  mediaScaleY?: number; // 미디어 Y 스케일 (기본 1)
+  mediaOffsetX?: number; // 미디어 X 오프셋 (%)
+  mediaOffsetY?: number; // 미디어 Y 오프셋 (%)
+
+  // 미디어 애니메이션
+  mediaAnimation?: "none" | "fade-in-out" | "slide-left" | "slide-right" | "slide-up" | "slide-down" | "zoom-in" | "zoom-out" | "slide-horizontal" | "slide-vertical"; // 이미지/비디오 애니메이션
+  mediaAnimationDuration?: number; // 애니메이션 재생 시간 (초 단위, 기본: duration * 0.8)
+  mediaAnimationDelay?: number; // 애니메이션 시작 지연 (초 단위, 기본: 0)
+  mediaAnimationRepeat?: number; // 반복 횟수 (1 = 1회, 0 = 무한 반복, 기본값: 1)
+  mediaAnimationGap?: number; // 반복 간격 (초 단위, 기본값: 0)
+  mediaFadeInDuration?: number; // 페이드 인 시간 (초 단위, fade-in-out 전용)
+  mediaFadeOutDuration?: number; // 페이드 아웃 시간 (초 단위, fade-in-out 전용)
 
   // 텍스트
   text?: string; // 텍스트 내용
   textColor?: string; // 텍스트 색상
   fontSize?: number; // 폰트 크기
-  textAnimation?: "none" | "fade-in-out" | "slide-horizontal" | "slide-vertical"; // 텍스트 슬라이딩 이펙트
+  textAnimation?: "none" | "fade-in-out" | "slide-left" | "slide-right" | "slide-up" | "slide-down" | "zoom-in" | "zoom-out" | "slide-horizontal" | "slide-vertical"; // 텍스트 애니메이션
   textAnimationDuration?: number; // 애니메이션 재생 시간 (초 단위, 기본: duration * 0.8)
   textAnimationDelay?: number; // 애니메이션 시작 지연 (초 단위, 기본: 0)
   textAnimationRepeat?: number; // 반복 횟수 (1 = 1회, 0 = 무한 반복, 기본값: 1)
@@ -63,7 +82,7 @@ export interface Slide {
 // Playlist (플레이리스트)
 // ============================================
 export interface Playlist {
-  id: number;
+  id: string;
   name: string;
   description: string;
   slideIds: string[]; // 슬라이드 ID 배열 (순서 보장)
@@ -75,7 +94,7 @@ export interface Playlist {
 // Project (프로젝트)
 // ============================================
 export interface Project {
-  id: number;
+  id: string;
   name: string;
   client: string;
   media: MediaFile[];
@@ -90,7 +109,7 @@ export interface Project {
 // 플레이리스트 요약 정보 (목록 페이지용)
 // ============================================
 export interface PlaylistSummary {
-  id: number;
+  id: string;
   name: string;
   description: string;
   slideCount: number;
@@ -112,7 +131,7 @@ export interface PlaylistSummary {
 // 프로젝트 요약 정보 (목록 페이지용)
 // ============================================
 export interface ProjectSummary {
-  id: number;
+  id: string;
   name: string;
   client: string;
   mediaCount: number;

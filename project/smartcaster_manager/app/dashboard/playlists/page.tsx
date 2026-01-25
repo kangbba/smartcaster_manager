@@ -1,17 +1,136 @@
 "use client";
 
 import Link from "next/link";
-import { getPlaylistSummaries } from "@/lib/data/playlists";
-import PlaylistPreviewGrid from "@/app/components/PlaylistPreviewGrid";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase/client";
+import PlaylistPreviewGrid, { type PreviewSlideData } from "@/app/components/PlaylistPreviewGrid";
+import { formatTotalDuration } from "@/lib/utils/formatting";
+import { mapDbSlideToSlide, mapDbMediaToMediaFile } from "@/lib/data/mappers";
+import type { MediaRow, SlideRow } from "@/lib/types/database";
+
+type PlaylistRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+};
+
+type PlaylistItemRow = {
+  playlist_id: string;
+  slide_id: string;
+  order_index: number;
+};
+
+type ProjectRow = {
+  id: string;
+  name: string;
+};
 
 export default function PlaylistsPage() {
-  const playlistSummaries = getPlaylistSummaries();
+  const router = useRouter();
+  const [playlists, setPlaylists] = useState<PlaylistRow[]>([]);
+  const [playlistItems, setPlaylistItems] = useState<PlaylistItemRow[]>([]);
+  const [slides, setSlides] = useState<SlideRow[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [media, setMedia] = useState<MediaRow[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data: playlistData } = await supabase
+        .from("playlists")
+        .select("id,name,description,created_at")
+        .order("created_at", { ascending: false });
+      const { data: playlistItemData } = await supabase
+        .from("playlist_items")
+        .select("playlist_id,slide_id,order_index");
+      const { data: slideData } = await supabase
+        .from("slides")
+        .select("id,project_id,background_color,duration_seconds,media_id,content,name");
+      const { data: projectData } = await supabase
+        .from("projects")
+        .select("id,name");
+      const { data: mediaData } = await supabase
+        .from("media")
+        .select("id,type");
+
+      setPlaylists((playlistData as PlaylistRow[]) || []);
+      setPlaylistItems((playlistItemData as PlaylistItemRow[]) || []);
+      setSlides((slideData as SlideRow[]) || []);
+      setProjects((projectData as ProjectRow[]) || []);
+      setMedia((mediaData as MediaRow[]) || []);
+    };
+
+    void load();
+  }, []);
+
+  const playlistSummaries = useMemo(() => {
+    const projectById = new Map(projects.map((p) => [p.id, p.name]));
+    const slideById = new Map(slides.map((s) => [s.id, s]));
+    const mediaByIdMap = new Map(media.map((m) => [m.id, m]));
+
+    return playlists.map((playlist) => {
+      const items = playlistItems
+        .filter((item) => item.playlist_id === playlist.id)
+        .sort((a, b) => a.order_index - b.order_index);
+
+      const slideList = items
+        .map((item) => slideById.get(item.slide_id))
+        .filter(Boolean) as SlideRow[];
+
+      const projectsUsed = Array.from(
+        new Set(slideList.map((s) => projectById.get(s.project_id) || "프로젝트"))
+      );
+
+      const durations = slideList.map((s) => s.duration_seconds || 0);
+
+      const previewSlides: PreviewSlideData[] = slideList.slice(0, 8).map((slideRow) => {
+        const projectName = projectById.get(slideRow.project_id) || "프로젝트";
+        const slide = mapDbSlideToSlide(slideRow, mediaByIdMap, projectName);
+        const mediaRow = slideRow.media_id ? media.find(m => m.id === slideRow.media_id) : null;
+        const mediaFile = mediaRow ? mapDbMediaToMediaFile(mediaRow) : null;
+        return {
+          slide,
+          media: mediaFile,
+        };
+      });
+
+      return {
+        id: playlist.id,
+        name: playlist.name,
+        description: playlist.description || "",
+        slideCount: items.length,
+        totalDuration: formatTotalDuration(durations),
+        projects: projectsUsed,
+        status: "active" as const,
+        createdAt: playlist.created_at?.slice(0, 10) || "",
+        assignedDevices: 0,
+        previewSlides,
+      };
+    });
+  }, [playlists, playlistItems, slides, projects, media]);
+
+  const handleCreatePlaylist = async () => {
+    const name = window.prompt("플레이리스트 이름을 입력하세요.");
+    if (!name) return;
+    const description = window.prompt("설명 (선택)");
+    const { data, error } = await supabase
+      .from("playlists")
+      .insert({ name, description: description || null })
+      .select("id")
+      .single();
+    if (error || !data) return;
+    router.push(`/dashboard/playlists/${data.id}`);
+  };
 
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold text-gray-800">플레이리스트</h1>
-        <button className="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600">
+        <button
+          onClick={handleCreatePlaylist}
+          className="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600"
+        >
           + 플레이리스트 생성
         </button>
       </div>
@@ -34,7 +153,7 @@ export default function PlaylistsPage() {
           >
             {/* 플레이리스트 헤더 */}
             <div className="h-32 bg-gradient-to-br from-purple-100 to-pink-200 p-4">
-              <PlaylistPreviewGrid slides={playlist.previewSlides} columns={4} size="md" showNames />
+              <PlaylistPreviewGrid slides={playlist.previewSlides} columns={4} />
             </div>
 
             {/* 플레이리스트 정보 */}

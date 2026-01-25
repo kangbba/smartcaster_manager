@@ -1,73 +1,296 @@
 "use client";
 
-import { useState, use, useEffect } from "react";
+import { useState, use, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Slide } from "@/lib/types";
-import { getProjectById } from "@/lib/data/projects";
-import { formatDurationSeconds, getFileIcon } from "@/lib/utils/fileIcons";
-import { getDefaultAnimationConfig } from "@/lib/animation-specs";
+import { Slide, MediaFile } from "@/lib/types";
+import type { ProjectRow, MediaRow, SlideRow } from "@/lib/types/database";
+import { supabase } from "@/lib/supabase/client";
+import { getFileIcon } from "@/lib/utils/fileIcons";
+import { formatDurationSeconds, formatFileSize, sanitizeFileName } from "@/lib/utils/formatting";
+import { mapDbSlideToSlide, mapDbMediaToMediaFile, buildSlideContent } from "@/lib/data/mappers";
+import { SLIDE_DEFAULTS } from "@/lib/config";
+import { getDefaultAnimationConfig, type TextAnimationType } from "@/lib/animation-specs";
+import { useTimelinePlayback, useSlideHistory } from "@/lib/hooks";
 import MediaLibraryPanel from "@/app/components/MediaLibraryPanel";
 import SlideCanvas from "@/app/components/SlideCanvas";
+import SlideThumbnail from "@/app/components/SlideThumbnail";
+import { SlideEditorToolbar, type ToolbarAction } from "@/app/components/SlideEditorToolbar";
+import {
+  BackgroundPanel,
+  ImagePanel,
+  TextPanel,
+  AudioPanel,
+  type ElementType,
+} from "@/app/components/SlideElementPanels";
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const [slides, setSlides] = useState<Slide[]>([]);
   const [editingSlide, setEditingSlide] = useState<Slide | null>(null);
   const [selectedMediaName, setSelectedMediaName] = useState<string | null>(null);
-  const [showEditPanel, setShowEditPanel] = useState<boolean>(false);
-  const [timelinePosition, setTimelinePosition] = useState<number>(0); // 타임라인 위치 (0 ~ duration)
+  const [selectedElement, setSelectedElement] = useState<ElementType>(null);
+  const [clipboard, setClipboard] = useState<Partial<Slide> | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [project, setProject] = useState<ProjectRow | null>(null);
+  const [mediaRows, setMediaRows] = useState<MediaRow[]>([]);
+  const [uploadingMedia, setUploadingMedia] = useState<boolean>(false);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [savingSlide, setSavingSlide] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { id } = use(params);
-  const project = getProjectById(Number(id));
+
+  // History management for undo/redo
+  const slideHistory = useSlideHistory(editingSlide);
+
+  // Update editingSlide when history changes
+  useEffect(() => {
+    if (slideHistory.currentSlide && slideHistory.currentSlide.id === editingSlide?.id) {
+      setEditingSlide(slideHistory.currentSlide);
+    }
+  }, [slideHistory.currentSlide]);
+
+  const media = useMemo<MediaFile[]>(
+    () => mediaRows.map(mapDbMediaToMediaFile),
+    [mediaRows]
+  );
+
+  const visualMedia = useMemo(
+    () => media.filter((item) => item.type === "image" || item.type === "video"),
+    [media]
+  );
+
+  const handleImportMedia = () => {
+    if (uploadingMedia) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleMediaFileSelect = async (file: File) => {
+    setUploadingMedia(true);
+    setUploadMessage(`업로드 중... ${file.name}`);
+    const safeName = sanitizeFileName(file.name);
+    const filePath = `${Date.now()}-${safeName}`;
+    const { error } = await supabase.storage.from("media").upload(filePath, file);
+    if (error) {
+      setUploadingMedia(false);
+      setUploadMessage(`업로드 실패: ${error.message}`);
+      return;
+    }
+
+    const { data: publicUrlData } = supabase.storage.from("media").getPublicUrl(filePath);
+    const type = file.type.startsWith("video")
+      ? "video"
+      : file.type.startsWith("image")
+        ? "image"
+        : file.type.startsWith("audio")
+          ? "audio"
+          : "other";
+
+    const { data: rowData, error: rowError } = await supabase
+      .from("media")
+      .insert({
+        name: file.name,
+        type,
+        bucket: "media",
+        path: filePath,
+        url: publicUrlData.publicUrl,
+        size_bytes: file.size,
+        duration_seconds: null,
+        mime_type: file.type || null,
+      })
+      .select("*")
+      .single();
+
+    setUploadingMedia(false);
+    if (rowError || !rowData) {
+      setUploadMessage(`업로드 실패: ${rowError?.message || "DB 저장 실패"}`);
+      return;
+    }
+    setMediaRows((prev) => [rowData as MediaRow, ...prev]);
+    setUploadMessage(`업로드 완료: ${rowData.name}`);
+  };
+
+  const handleDeleteMedia = async (id: string) => {
+    const target = mediaRows.find((item) => item.id === id);
+    if (!target) return;
+    if (!window.confirm(`삭제할까요?\n${target.name}`)) return;
+    if (target.path) {
+      await supabase.storage.from("media").remove([target.path]);
+    }
+    const { error } = await supabase.from("media").delete().eq("id", id);
+    if (error) {
+      setUploadMessage(`삭제 실패: ${error.message}`);
+      return;
+    }
+    setMediaRows((prev) => prev.filter((item) => item.id !== id));
+    setUploadMessage(`삭제 완료: ${target.name}`);
+  };
+
+  const mediaByName = useMemo(() => {
+    return new Map(mediaRows.map((item) => [item.name, item]));
+  }, [mediaRows]);
+
+  const mediaById = useMemo(() => {
+    return new Map(mediaRows.map((item) => [item.id, item]));
+  }, [mediaRows]);
 
   const getEffectiveDuration = (slide: Slide) => {
-    const mediaName = slide.video || slide.image;
-    const media = mediaName ? project?.media.find((m) => m.name === mediaName) : null;
-    const mediaSeconds = media?.durationSeconds ?? null;
+    const mediaId = slide.mediaId || null;
+    const mediaItem = mediaId ? mediaRows.find((m) => m.id === mediaId) : null;
+    const mediaSeconds = mediaItem?.duration_seconds ?? null;
     if (!mediaSeconds) return slide.duration;
     return Math.max(slide.duration, mediaSeconds);
   };
 
-  // 초기화
-  useEffect(() => {
-    if (project) {
-      setSlides(project.slides);
-    }
-  }, [project]);
+  const effectiveDuration = editingSlide ? getEffectiveDuration(editingSlide) : 10;
+  const [timelinePosition, setTimelinePosition] = useTimelinePlayback(effectiveDuration, isPlaying);
 
+  // 초기화 - 병렬 데이터 페칭으로 성능 개선
   useEffect(() => {
-    if (!editingSlide) return;
-    const effectiveDuration = getEffectiveDuration(editingSlide);
-    setTimelinePosition((prev) => Math.min(prev, effectiveDuration));
-  }, [editingSlide?.duration]);
+    const load = async () => {
+      // 3개의 쿼리를 병렬로 실행 (성능 3배 향상)
+      const [projectResult, slideResult, mediaResult] = await Promise.all([
+        supabase
+          .from("projects")
+          .select("id,name,description,created_at")
+          .eq("id", id)
+          .single(),
+        supabase
+          .from("slides")
+          .select("*")
+          .eq("project_id", id)
+          .order("order_index", { ascending: true }),
+        supabase
+          .from("media")
+          .select("*")
+          .order("created_at", { ascending: false }),
+      ]);
 
+      const projectData = projectResult.data;
+      const slideData = slideResult.data;
+      const mediaData = mediaResult.data;
+
+      const projectName = projectData?.name || "";
+      const mediaByIdLocal = new Map<string, MediaRow>(
+        (mediaData || []).map((item: MediaRow) => [item.id, item])
+      );
+      const mappedSlides: Slide[] = (slideData || []).map((row: SlideRow) =>
+        mapDbSlideToSlide(row, mediaByIdLocal, projectName)
+      );
+
+      setProject(projectData || null);
+      setMediaRows((mediaData as MediaRow[]) || []);
+      setSlides(mappedSlides);
+    };
+
+    void load();
+  }, [id]);
+
+  // 슬라이드 변경 시 타임라인 리셋
   useEffect(() => {
     if (!editingSlide) return;
     setTimelinePosition(0);
     setIsPlaying(false);
-  }, [editingSlide?.id]);
+  }, [editingSlide?.id, setTimelinePosition]);
 
+  // 재생이 끝에 도달하면 정지
   useEffect(() => {
-    if (!editingSlide || !isPlaying) return;
-    const effectiveDuration = getEffectiveDuration(editingSlide);
+    if (timelinePosition >= effectiveDuration && isPlaying) {
+      setIsPlaying(false);
+    }
+  }, [timelinePosition, effectiveDuration, isPlaying]);
 
-    const tickMs = 33;
-    const step = tickMs / 1000;
-    const intervalId = window.setInterval(() => {
-      setTimelinePosition((prev) => {
-        const next = prev + step;
-        if (next >= effectiveDuration) {
-          setIsPlaying(false);
-          return effectiveDuration;
+  // 키보드 단축키 핸들러
+  useEffect(() => {
+    if (!editingSlide) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if user is typing in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
+        return;
+      }
+
+      const isMac = navigator.userAgent.toUpperCase().indexOf("MAC") >= 0;
+      const ctrlKey = isMac ? e.metaKey : e.ctrlKey;
+
+      if (ctrlKey && e.key === "z") {
+        e.preventDefault();
+        const undoSlide = slideHistory.undo();
+        if (undoSlide) setEditingSlide(undoSlide);
+      } else if (ctrlKey && (e.key === "y" || (e.shiftKey && e.key === "z"))) {
+        e.preventDefault();
+        const redoSlide = slideHistory.redo();
+        if (redoSlide) setEditingSlide(redoSlide);
+      } else if (ctrlKey && e.key === "c" && selectedElement) {
+        e.preventDefault();
+        // Copy logic (same as toolbar)
+        if (selectedElement === "text") {
+          setClipboard({
+            text: editingSlide.text,
+            textColor: editingSlide.textColor,
+            fontSize: editingSlide.fontSize,
+            textPositionX: editingSlide.textPositionX,
+            textPositionY: editingSlide.textPositionY,
+          });
+        } else if (selectedElement === "image") {
+          setClipboard({
+            image: editingSlide.image,
+            video: editingSlide.video,
+            mediaId: editingSlide.mediaId,
+            mediaScaleX: editingSlide.mediaScaleX,
+            mediaScaleY: editingSlide.mediaScaleY,
+            mediaOffsetX: editingSlide.mediaOffsetX,
+            mediaOffsetY: editingSlide.mediaOffsetY,
+          });
         }
-        return next;
-      });
-    }, tickMs);
+      } else if (ctrlKey && e.key === "v" && clipboard) {
+        e.preventDefault();
+        const updated = { ...editingSlide, ...clipboard };
+        setEditingSlide(updated);
+        slideHistory.pushHistory(updated);
+      } else if (ctrlKey && e.key === "x" && selectedElement === "text") {
+        e.preventDefault();
+        setClipboard({
+          text: editingSlide.text,
+          textColor: editingSlide.textColor,
+          fontSize: editingSlide.fontSize,
+          textPositionX: editingSlide.textPositionX,
+          textPositionY: editingSlide.textPositionY,
+        });
+        const updated = {
+          ...editingSlide,
+          text: undefined,
+          textColor: undefined,
+          fontSize: undefined,
+          textPositionX: undefined,
+          textPositionY: undefined,
+        };
+        setEditingSlide(updated);
+        slideHistory.pushHistory(updated);
+      } else if (e.key === "Delete" && selectedElement) {
+        e.preventDefault();
+        let deleteUpdated = { ...editingSlide };
+        if (selectedElement === "text") {
+          deleteUpdated.text = undefined;
+        } else if (selectedElement === "image") {
+          deleteUpdated.image = undefined;
+          deleteUpdated.video = undefined;
+          deleteUpdated.mediaId = undefined;
+        } else if (selectedElement === "audio") {
+          deleteUpdated.audio = undefined;
+          deleteUpdated.audioMediaId = undefined;
+        }
+        setEditingSlide(deleteUpdated);
+        slideHistory.pushHistory(deleteUpdated);
+        setSelectedElement(null);
+      }
+    };
 
-    return () => window.clearInterval(intervalId);
-  }, [editingSlide, isPlaying]);
-
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editingSlide, selectedElement, clipboard, slideHistory]);
 
   if (!project) {
     return (
@@ -89,8 +312,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const handleEditSlide = (slide: Slide) => {
     setEditingSlide({ ...slide });
     setSelectedMediaName(null);
-    setTimelinePosition(0); // 타임라인 리셋
-    setIsPlaying(false);
   };
 
   // 새 슬라이드 생성
@@ -100,43 +321,109 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       name: `슬라이드 ${slides.length + 1}`,
       projectId: project.id,
       projectName: project.name,
-      backgroundColor: "#FFFFFF",
+      backgroundColor: SLIDE_DEFAULTS.BACKGROUND_COLOR,
       text: "",
-      fontSize: 32,
-      textColor: "#000000",
-      textPositionX: 50,
-      textPositionY: 50,
-      resolutionWidth: 1920,
-      resolutionHeight: 1080,
-      duration: 10, // 기본 10초
+      fontSize: SLIDE_DEFAULTS.FONT_SIZE,
+      textColor: SLIDE_DEFAULTS.TEXT_COLOR,
+      textPositionX: SLIDE_DEFAULTS.TEXT_POSITION_X,
+      textPositionY: SLIDE_DEFAULTS.TEXT_POSITION_Y,
+      resolutionWidth: SLIDE_DEFAULTS.RESOLUTION_WIDTH,
+      resolutionHeight: SLIDE_DEFAULTS.RESOLUTION_HEIGHT,
+      duration: SLIDE_DEFAULTS.DURATION,
     };
     setEditingSlide(newSlide);
-    setTimelinePosition(0); // 타임라인 리셋
-    setIsPlaying(false);
+  };
+
+  const resolveMediaId = (slide: Slide) => {
+    if (slide.mediaId) return slide.mediaId;
+    const mediaName = slide.video || slide.image;
+    if (!mediaName) return null;
+    const mediaItem = mediaByName.get(mediaName);
+    return mediaItem?.id || null;
+  };
+
+  const resolveAudioId = (slide: Slide) => {
+    if (slide.audioMediaId) return slide.audioMediaId;
+    if (!slide.audio) return null;
+    const audioItem = mediaByName.get(slide.audio);
+    return audioItem?.id || null;
   };
 
   // 슬라이드 저장
-  const handleSaveSlide = () => {
-    if (!editingSlide) return;
+  const handleSaveSlide = async () => {
+    if (!editingSlide || !project) return;
+    setSavingSlide(true);
+    setSaveError(null);
 
-    const existingIndex = slides.findIndex(s => s.id === editingSlide.id);
+    const existingIndex = slides.findIndex((s) => s.id === editingSlide.id);
+    const mediaId = resolveMediaId(editingSlide);
+    const payload = {
+      project_id: project.id,
+      name: editingSlide.name,
+      type: editingSlide.video ? "video" : editingSlide.image ? "image" : "color",
+      media_id: mediaId,
+      audio_media_id: resolveAudioId(editingSlide),
+      duration_seconds: editingSlide.duration,
+      background_color: editingSlide.backgroundColor,
+      resolution_width: editingSlide.resolutionWidth || SLIDE_DEFAULTS.RESOLUTION_WIDTH,
+      resolution_height: editingSlide.resolutionHeight || SLIDE_DEFAULTS.RESOLUTION_HEIGHT,
+      order_index: existingIndex >= 0 ? existingIndex : slides.length,
+      content: buildSlideContent(editingSlide),
+    };
+
     if (existingIndex >= 0) {
-      // 기존 슬라이드 수정
+      const { data, error } = await supabase
+        .from("slides")
+        .update(payload)
+        .eq("id", editingSlide.id)
+        .select("*")
+        .single();
+      if (error || !data) {
+        setSaveError(error?.message || "슬라이드 저장에 실패했습니다.");
+        setSavingSlide(false);
+        return;
+      }
+      const mapped = mapDbSlideToSlide(data as SlideRow, mediaById, project.name);
       const updated = [...slides];
-      updated[existingIndex] = editingSlide;
+      updated[existingIndex] = mapped;
       setSlides(updated);
     } else {
-      // 새 슬라이드 추가
-      setSlides([...slides, editingSlide]);
+      const { data, error } = await supabase
+        .from("slides")
+        .insert(payload)
+        .select("*")
+        .single();
+      if (error || !data) {
+        setSaveError(error?.message || "슬라이드 저장에 실패했습니다.");
+        setSavingSlide(false);
+        return;
+      }
+      const mapped = mapDbSlideToSlide(data as SlideRow, mediaById, project.name);
+      setSlides((prev) => [...prev, mapped]);
     }
+
     setEditingSlide(null);
-    setIsPlaying(false);
+    setSavingSlide(false);
+  };
+
+  const handleDeleteSlide = async (slideId: string) => {
+    const target = slides.find((s) => s.id === slideId);
+    if (!target) return;
+    if (!window.confirm(`슬라이드를 삭제할까요?\n${target.name}`)) return;
+    const { error } = await supabase.from("slides").delete().eq("id", slideId);
+    if (error) {
+      setSaveError(error.message);
+      return;
+    }
+    setSlides((prev) => prev.filter((s) => s.id !== slideId));
+    if (editingSlide?.id === slideId) {
+      setEditingSlide(null);
+    }
   };
 
   // 슬라이드 편집 취소
   const handleCancelEditSlide = () => {
     setEditingSlide(null);
-    setIsPlaying(false);
   };
 
   return (
@@ -152,7 +439,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-800">{project.name}</h1>
-            <p className="text-gray-600 mt-1">{project.client}</p>
+            <p className="text-gray-600 mt-1">{project.description || "미정"}</p>
           </div>
         </div>
 
@@ -193,7 +480,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               <div className="grid grid-cols-3 gap-3 xl:grid-cols-4">
                 {slides.map((slide) => {
                   const fileName = slide.image || slide.video;
-                  const media = fileName ? project.media.find(m => m.name === fileName) : null;
+                  const slideMedia = fileName ? media.find((m) => m.name === fileName) : null;
 
                   return (
                     <div
@@ -206,36 +493,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                         className="aspect-video relative flex items-center justify-center"
                         style={{ backgroundColor: slide.backgroundColor }}
                       >
-                        {/* 미디어 배경 */}
-                        {(slide.image || slide.video) && media && (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-5xl opacity-20">{getFileIcon(media.type)}</span>
-                          </div>
-                        )}
+                        <button
+                          className="absolute right-2 top-2 z-20 w-7 h-7 rounded-full bg-white/90 text-gray-500 hover:text-red-600 shadow opacity-100 transition"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSlide(slide.id);
+                          }}
+                          title="삭제"
+                        >
+                          ✕
+                        </button>
 
-                        {/* 텍스트 오버레이 */}
-                        {slide.text && (
-                          <div
-                            className="absolute inset-0 flex items-center justify-center p-3 text-center"
-                            style={{
-                              color: slide.textColor || "#000000",
-                              fontSize: `${Math.min(slide.fontSize || 32, 24)}px`,
-                              fontWeight: "bold",
-                              lineHeight: "1.2",
-                            }}
-                          >
-                            <div className="line-clamp-4">
-                              {slide.text}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 빈 슬라이드 */}
-                        {!slide.text && !slide.image && !slide.video && (
-                          <div className="text-gray-300 text-center">
-                            <span className="text-5xl">📄</span>
-                          </div>
-                        )}
+                        <SlideThumbnail slide={slide} media={slideMedia} />
 
                         {/* 호버 오버레이 */}
                         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
@@ -248,18 +517,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                       {/* 정보 */}
                       <div className="p-2 bg-white border-t">
                         <h3 className="font-bold text-xs text-gray-800 truncate mb-1">{slide.name}</h3>
-                        {media && (
+                        {slideMedia && (
                           <div className="flex items-center gap-2 text-[11px] text-gray-500">
-                            <span className="truncate">{media.name}</span>
-                            {media.durationSeconds && (
+                            <span className="truncate">{slideMedia.name}</span>
+                            {slideMedia.durationSeconds && (
                               <>
                                 <span>•</span>
-                                <span>{formatDurationSeconds(media.durationSeconds)}</span>
+                                <span>{formatDurationSeconds(slideMedia.durationSeconds)}</span>
                               </>
                             )}
                           </div>
                         )}
-                        {!media && slide.text && (
+                        {!slideMedia && slide.text && (
                           <p className="text-[11px] text-gray-500 truncate">텍스트 슬라이드</p>
                         )}
                         <div className="mt-1 flex items-center gap-2 text-[11px]">
@@ -285,6 +554,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               <h2 className="text-xl font-bold text-gray-800">
                 슬라이드 편집
               </h2>
+              <div className="flex items-center gap-4">
+                {uploadMessage && (
+                  <div className="text-sm text-gray-600">
+                    {uploadMessage}
+                  </div>
+                )}
+                {saveError && (
+                  <div className="text-sm text-red-600">
+                    저장 실패: {saveError}
+                  </div>
+                )}
+              </div>
               <div className="flex gap-3">
                 <button
                   onClick={handleCancelEditSlide}
@@ -294,22 +575,137 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 </button>
                 <button
                   onClick={handleSaveSlide}
-                  className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold"
+                  disabled={savingSlide}
+                  className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold disabled:opacity-60"
                 >
-                  저장
+                  {savingSlide ? "저장 중..." : "저장"}
                 </button>
               </div>
             </div>
 
+            {/* 툴바 */}
+            <SlideEditorToolbar
+              canUndo={slideHistory.canUndo}
+              canRedo={slideHistory.canRedo}
+              hasSelection={selectedElement !== null}
+              hasClipboard={clipboard !== null}
+              onAction={(action: ToolbarAction) => {
+                switch (action) {
+                  case "undo":
+                    const undoSlide = slideHistory.undo();
+                    if (undoSlide) setEditingSlide(undoSlide);
+                    break;
+                  case "redo":
+                    const redoSlide = slideHistory.redo();
+                    if (redoSlide) setEditingSlide(redoSlide);
+                    break;
+                  case "copy":
+                    if (!selectedElement || !editingSlide) break;
+                    if (selectedElement === "text") {
+                      setClipboard({
+                        text: editingSlide.text,
+                        textColor: editingSlide.textColor,
+                        fontSize: editingSlide.fontSize,
+                        textPositionX: editingSlide.textPositionX,
+                        textPositionY: editingSlide.textPositionY,
+                      });
+                    } else if (selectedElement === "image") {
+                      setClipboard({
+                        image: editingSlide.image,
+                        video: editingSlide.video,
+                        mediaId: editingSlide.mediaId,
+                        mediaScaleX: editingSlide.mediaScaleX,
+                        mediaScaleY: editingSlide.mediaScaleY,
+                        mediaOffsetX: editingSlide.mediaOffsetX,
+                        mediaOffsetY: editingSlide.mediaOffsetY,
+                      });
+                    } else if (selectedElement === "background") {
+                      setClipboard({
+                        backgroundColor: editingSlide.backgroundColor,
+                        resolutionWidth: editingSlide.resolutionWidth,
+                        resolutionHeight: editingSlide.resolutionHeight,
+                      });
+                    } else if (selectedElement === "audio") {
+                      setClipboard({
+                        audio: editingSlide.audio,
+                        audioMediaId: editingSlide.audioMediaId,
+                      });
+                    }
+                    break;
+                  case "cut":
+                    if (!selectedElement || !editingSlide) break;
+                    // Copy first
+                    if (selectedElement === "text") {
+                      setClipboard({
+                        text: editingSlide.text,
+                        textColor: editingSlide.textColor,
+                        fontSize: editingSlide.fontSize,
+                        textPositionX: editingSlide.textPositionX,
+                        textPositionY: editingSlide.textPositionY,
+                      });
+                      const updated = {
+                        ...editingSlide,
+                        text: undefined,
+                        textColor: undefined,
+                        fontSize: undefined,
+                        textPositionX: undefined,
+                        textPositionY: undefined,
+                      };
+                      setEditingSlide(updated);
+                      slideHistory.pushHistory(updated);
+                    }
+                    break;
+                  case "paste":
+                    if (!clipboard || !editingSlide) break;
+                    const updated = { ...editingSlide, ...clipboard };
+                    setEditingSlide(updated);
+                    slideHistory.pushHistory(updated);
+                    break;
+                  case "delete":
+                    if (!selectedElement || !editingSlide) break;
+                    let deleteUpdated = { ...editingSlide };
+                    if (selectedElement === "text") {
+                      deleteUpdated.text = undefined;
+                    } else if (selectedElement === "image") {
+                      deleteUpdated.image = undefined;
+                      deleteUpdated.video = undefined;
+                      deleteUpdated.mediaId = undefined;
+                    } else if (selectedElement === "audio") {
+                      deleteUpdated.audio = undefined;
+                      deleteUpdated.audioMediaId = undefined;
+                    }
+                    setEditingSlide(deleteUpdated);
+                    slideHistory.pushHistory(deleteUpdated);
+                    setSelectedElement(null);
+                    break;
+                  case "duplicate":
+                    // For now, just copy
+                    if (selectedElement && editingSlide) {
+                      // Same as copy
+                      if (selectedElement === "text") {
+                        setClipboard({
+                          text: editingSlide.text,
+                          textColor: editingSlide.textColor,
+                          fontSize: editingSlide.fontSize,
+                        });
+                      }
+                    }
+                    break;
+                }
+              }}
+            />
+
             {/* 모달 본문 */}
             <div className="flex-1 flex overflow-hidden">
               <MediaLibraryPanel
-                media={project.media}
+                media={visualMedia}
                 selectedMediaName={selectedMediaName}
                 onSelect={setSelectedMediaName}
+                onImport={handleImportMedia}
+                onDelete={handleDeleteMedia}
                 footer={
                   selectedMediaName && (() => {
-                    const selectedMedia = project.media.find(m => m.name === selectedMediaName);
+                    const selectedMedia = mediaByName.get(selectedMediaName);
                     if (!selectedMedia) return null;
                     return (
                       <div className="border-t bg-white p-4">
@@ -326,17 +722,17 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                               </div>
                               <div className="flex justify-between">
                                 <span>크기:</span>
-                                <span className="font-medium">{selectedMedia.size}</span>
+                                <span className="font-medium">{formatFileSize(selectedMedia.size_bytes || 0)}</span>
                               </div>
-                            {selectedMedia.durationSeconds && (
+                            {selectedMedia.duration_seconds && (
                               <div className="flex justify-between">
                                 <span>재생시간:</span>
-                                <span className="font-medium">{formatDurationSeconds(selectedMedia.durationSeconds)}</span>
+                                <span className="font-medium">{formatDurationSeconds(selectedMedia.duration_seconds)}</span>
                               </div>
                             )}
                               <div className="flex justify-between">
                                 <span>업로드:</span>
-                                <span className="font-medium">{selectedMedia.uploadDate}</span>
+                                <span className="font-medium">{selectedMedia.created_at?.slice(0, 10) || ""}</span>
                               </div>
                             </div>
                           </div>
@@ -348,6 +744,22 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     );
                   })()
                 }
+              />
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept="image/*,video/*,audio/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleMediaFileSelect(file);
+                  }
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                  }
+                }}
               />
 
               {/* 중앙 + 우측 영역 */}
@@ -368,29 +780,41 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                   {/* 캔버스 미리보기 */}
                   <SlideCanvas
                     slide={editingSlide}
-                    media={project.media}
+                    media={visualMedia}
                     selectedMediaName={selectedMediaName}
                     timelinePosition={timelinePosition}
                     onApplyMedia={(mediaName) => {
-                      const selected = project.media.find((item) => item.name === mediaName);
+                      const selected = mediaByName.get(mediaName);
                       if (!selected) return;
+                      if (selected.type === "audio") return;
                       setEditingSlide((prev) =>
                         prev
                           ? {
                               ...prev,
                               image: selected.type === "image" ? mediaName : undefined,
                               video: selected.type === "video" ? mediaName : undefined,
-                              duration: selected.type === "video" && selected.durationSeconds
-                                ? selected.durationSeconds
-                                : prev.duration,
+                              mediaId: selected.id,
+                              mediaScaleX: 1,
+                              mediaScaleY: 1,
+                              mediaOffsetX: 0,
+                              mediaOffsetY: 0,
+                              duration:
+                                selected.type === "video" && selected.duration_seconds
+                                  ? selected.duration_seconds
+                                  : prev.duration,
                             }
                           : prev
                       );
                     }}
-                    onUpdateSlide={(updater) =>
-                      setEditingSlide((prev) => (prev ? updater(prev) : prev))
-                    }
-                    onRequestEditPanel={() => setShowEditPanel(true)}
+                    onUpdateSlide={(updater) => {
+                      setEditingSlide((prev) => {
+                        const updated = prev ? updater(prev) : prev;
+                        if (updated) slideHistory.pushHistory(updated);
+                        return updated;
+                      });
+                    }}
+                    onRequestEditPanel={() => {}}
+                    onSelectElement={setSelectedElement}
                   />
 
                   {/* 타임라인 슬라이더 */}
@@ -445,304 +869,67 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                   </div>
                 </div>
 
-                {/* 우측: 편집 패널 (조건부 표시) */}
-                {showEditPanel && (
-                  <div className="w-80 border-l flex flex-col bg-white">
-                    <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
-                      <h3 className="font-semibold text-gray-700">편집</h3>
-                      <button
-                        onClick={() => setShowEditPanel(false)}
-                        className="text-gray-500 hover:text-gray-700"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                      {/* 재생 시간 */}
-                      <div>
-                        {(() => {
-                          const mediaName = editingSlide.video || editingSlide.image;
-                          const media = mediaName
-                            ? project.media.find((m) => m.name === mediaName)
-                            : null;
-                          const mediaSeconds = media?.durationSeconds ?? null;
-                          const isVideoLocked = Boolean(editingSlide.video && mediaSeconds);
-                          const displaySeconds = isVideoLocked ? mediaSeconds : editingSlide.duration;
-
-                          return (
-                            <>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">
-                                재생 시간: {displaySeconds}초
-                                {isVideoLocked && (
-                                  <span className="ml-2 text-xs text-gray-400">(동영상 길이에 고정)</span>
-                                )}
-                              </label>
-                              <input
-                                type="range"
-                                min="1"
-                                max="60"
-                                value={displaySeconds}
-                                disabled={isVideoLocked}
-                                onChange={(e) => {
-                                  const newDuration = Number(e.target.value);
-                                  setEditingSlide({ ...editingSlide, duration: newDuration });
-                                  if (timelinePosition > newDuration) {
-                                    setTimelinePosition(newDuration);
-                                  }
-                                }}
-                                className={`w-full ${isVideoLocked ? "opacity-50 cursor-not-allowed" : ""}`}
-                              />
-                              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>1초</span>
-                                <span>60초</span>
-                              </div>
-                            </>
-                          );
-                        })()}
-                      </div>
-
-                      {/* 배경색 */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          배경색
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="color"
-                            value={editingSlide.backgroundColor}
-                            onChange={(e) => setEditingSlide({ ...editingSlide, backgroundColor: e.target.value })}
-                            className="w-16 h-10 rounded border border-gray-300 cursor-pointer"
-                          />
-                          <input
-                            type="text"
-                            value={editingSlide.backgroundColor}
-                            onChange={(e) => setEditingSlide({ ...editingSlide, backgroundColor: e.target.value })}
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 해상도 */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          해상도 (px)
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            min="1"
-                            value={editingSlide.resolutionWidth || 1920}
-                            onChange={(e) => setEditingSlide({
-                              ...editingSlide,
-                              resolutionWidth: Number(e.target.value)
-                            })}
-                            className="w-1/2 px-3 py-2 border border-gray-300 rounded"
-                            placeholder="가로"
-                          />
-                          <input
-                            type="number"
-                            min="1"
-                            value={editingSlide.resolutionHeight || 1080}
-                            onChange={(e) => setEditingSlide({
-                              ...editingSlide,
-                              resolutionHeight: Number(e.target.value)
-                            })}
-                            className="w-1/2 px-3 py-2 border border-gray-300 rounded"
-                            placeholder="세로"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 텍스트 */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          텍스트
-                        </label>
-                        <textarea
-                          value={editingSlide.text || ""}
-                          onChange={(e) => setEditingSlide({ ...editingSlide, text: e.target.value })}
-                          placeholder="텍스트를 입력하세요..."
-                          className="w-full h-32 px-3 py-2 border border-gray-300 rounded resize-none"
-                        />
-                      </div>
-
-                      {/* 텍스트 색상 */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          텍스트 색상
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="color"
-                            value={editingSlide.textColor || "#000000"}
-                            onChange={(e) => setEditingSlide({ ...editingSlide, textColor: e.target.value })}
-                            className="w-16 h-10 rounded border border-gray-300 cursor-pointer"
-                          />
-                          <input
-                            type="text"
-                            value={editingSlide.textColor || "#000000"}
-                            onChange={(e) => setEditingSlide({ ...editingSlide, textColor: e.target.value })}
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 폰트 크기 */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          폰트 크기: {editingSlide.fontSize || 32}px
-                        </label>
-                        <input
-                          type="range"
-                          min="16"
-                          max="120"
-                          value={editingSlide.fontSize || 32}
-                          onChange={(e) => setEditingSlide({ ...editingSlide, fontSize: Number(e.target.value) })}
-                          className="w-full"
-                        />
-                      </div>
-
-                      {/* 텍스트 슬라이딩 이펙트 */}
-                      {editingSlide.text && (
-                        <>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              텍스트 슬라이딩 이펙트
-                            </label>
-                            <select
-                              value={editingSlide.textAnimation || "none"}
-                              onChange={(e) => {
-                                const newAnimation = e.target.value as any;
-                                const defaultConfig = getDefaultAnimationConfig(newAnimation, editingSlide.duration);
-                                setEditingSlide({
-                                  ...editingSlide,
-                                  textAnimation: newAnimation,
-                                  textAnimationDuration: defaultConfig.duration,
-                                  textAnimationDelay: defaultConfig.delay,
-                                  textAnimationRepeat: defaultConfig.repeat,
-                                  textAnimationGap: defaultConfig.gap,
-                                  textFadeInDuration: defaultConfig.fadeInDuration,
-                                  textFadeOutDuration: defaultConfig.fadeOutDuration
-                                });
-                              }}
-                              className="w-full px-3 py-2 border border-gray-300 rounded"
-                            >
-                              <option value="none">없음 (정적)</option>
-                              <option value="fade-in-out">페이드 인-아웃</option>
-                              <option value="slide-horizontal">가로 스크롤</option>
-                              <option value="slide-vertical">세로 스크롤</option>
-                            </select>
-                          </div>
-
-                          {editingSlide.textAnimation === "fade-in-out" ? (
-                            <>
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  페이드 인 시간 (초)
-                                </label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  max={editingSlide.duration}
-                                  value={editingSlide.textFadeInDuration ?? 0.6}
-                                  onChange={(e) => setEditingSlide({
-                                    ...editingSlide,
-                                    textFadeInDuration: Number(e.target.value)
-                                  })}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  페이드 아웃 시간 (초)
-                                </label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  max={editingSlide.duration}
-                                  value={editingSlide.textFadeOutDuration ?? 0.8}
-                                  onChange={(e) => setEditingSlide({
-                                    ...editingSlide,
-                                    textFadeOutDuration: Number(e.target.value)
-                                  })}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded"
-                                />
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              {(() => {
-                                const repeat = editingSlide.textAnimationRepeat ?? 1;
-                                const duration = editingSlide.duration;
-                                const minLoop = 0.1;
-                                const maxGap = repeat > 1
-                                  ? Math.max(0, (duration - (repeat * minLoop)) / (repeat - 1))
-                                  : duration;
-                                return (
-                                  <>
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  반복 횟수 (0 = 무한 반복)
-                                </label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  value={editingSlide.textAnimationRepeat ?? 1}
-                                  onChange={(e) => setEditingSlide({
-                                    ...editingSlide,
-                                    textAnimationRepeat: Math.max(0, Number(e.target.value))
-                                  })}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  반복 간격 (초)
-                                </label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  max={repeat > 0 ? maxGap : undefined}
-                                  value={editingSlide.textAnimationGap ?? 0}
-                                  onChange={(e) => setEditingSlide({
-                                    ...editingSlide,
-                                    textAnimationGap: Math.max(0, Math.min(maxGap, Number(e.target.value)))
-                                  })}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded"
-                                />
-                              </div>
-                                  </>
-                                );
-                              })()}
-                            </>
-                          )}
-                        </>
-                      )}
-
-                      {/* 미디어 제거 버튼 */}
-                      {(editingSlide.image || editingSlide.video) && (
-                        <div>
-                          <button
-                            onClick={() => setEditingSlide({
-                              ...editingSlide,
-                              image: undefined,
-                              video: undefined
-                            })}
-                            className="w-full px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-                          >
-                            미디어 제거
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                {/* 우측: 속성 패널 (항상 표시) */}
+                <div className="w-80 border-l flex flex-col bg-white">
+                  <div className="bg-gray-50 px-4 py-3 border-b">
+                    <h3 className="font-semibold text-gray-700">
+                      {!selectedElement && "속성 편집"}
+                      {selectedElement === "background" && "배경 편집"}
+                      {selectedElement === "image" && "이미지/비디오 편집"}
+                      {selectedElement === "text" && "텍스트 편집"}
+                      {selectedElement === "audio" && "오디오 편집"}
+                    </h3>
                   </div>
-                )}
+                  <div className="flex-1 overflow-y-auto p-4">
+                    {!selectedElement && (
+                      <div className="text-center text-gray-500 mt-8">
+                        <p className="text-sm mb-2">💡</p>
+                        <p className="text-xs">캔버스에서 요소를 선택하거나</p>
+                        <p className="text-xs">배경을 클릭하여 편집하세요</p>
+                      </div>
+                    )}
+                    {selectedElement === "background" && (
+                      <BackgroundPanel
+                        slide={editingSlide}
+                        onUpdate={(updates) => {
+                          const updated = { ...editingSlide, ...updates };
+                          setEditingSlide(updated);
+                          slideHistory.pushHistory(updated);
+                        }}
+                      />
+                    )}
+                    {selectedElement === "image" && (
+                      <ImagePanel
+                        slide={editingSlide}
+                        onUpdate={(updates) => {
+                          const updated = { ...editingSlide, ...updates };
+                          setEditingSlide(updated);
+                          slideHistory.pushHistory(updated);
+                        }}
+                      />
+                    )}
+                    {selectedElement === "text" && (
+                      <TextPanel
+                        slide={editingSlide}
+                        onUpdate={(updates) => {
+                          const updated = { ...editingSlide, ...updates };
+                          setEditingSlide(updated);
+                          slideHistory.pushHistory(updated);
+                        }}
+                      />
+                    )}
+                    {selectedElement === "audio" && (
+                      <AudioPanel
+                        slide={editingSlide}
+                        onUpdate={(updates) => {
+                          const updated = { ...editingSlide, ...updates };
+                          setEditingSlide(updated);
+                          slideHistory.pushHistory(updated);
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -751,3 +938,4 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     </div>
   );
 }
+

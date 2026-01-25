@@ -1,5 +1,5 @@
-export const assignmentsData: Record<string, number | null> = {
-  dev_001: 1,
+export const assignmentsData: Record<string, string | null> = {
+  dev_001: null,
   dev_002: null,
-  dev_003: 2,
+  dev_003: null,
 };

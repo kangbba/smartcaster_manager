@@ -1,17 +1,34 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const router = useRouter();
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        router.push("/dashboard");
+      }
+    });
+  }, [router]);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: 실제 로그인 로직 구현
-    router.push("/dashboard");
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: userId,
+      password,
+    });
+    setLoading(false);
+    if (!error) {
+      router.push("/dashboard");
+    }
   };
 
   return (
@@ -55,7 +72,8 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            className="w-full bg-cyan-500 text-white py-3 rounded-lg font-medium hover:bg-cyan-600 transition-colors"
+            disabled={loading}
+            className="w-full bg-cyan-500 text-white py-3 rounded-lg font-medium hover:bg-cyan-600 transition-colors disabled:opacity-50"
           >
             LOG IN
           </button>
@@ -66,6 +84,18 @@ export default function LoginPage() {
             className="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
           >
             건너뛰기
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              setLoading(true);
+              await supabase.auth.signInWithOAuth({ provider: "google" });
+              setLoading(false);
+            }}
+            className="w-full bg-gray-900 text-white py-3 rounded-lg font-medium hover:bg-gray-800 transition-colors"
+          >
+            Continue with Google
           </button>
         </form>
       </div>

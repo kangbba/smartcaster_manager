@@ -1,6 +1,6 @@
 import { assignmentsData } from "@/lib/data/assignments";
 
-type AssignmentsMap = Record<string, number | null>;
+type AssignmentsMap = Record<string, string | null>;
 
 let assignments: AssignmentsMap = { ...assignmentsData };
 const listeners = new Set<() => void>();

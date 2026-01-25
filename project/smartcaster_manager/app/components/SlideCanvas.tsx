@@ -2,8 +2,10 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MediaFile, Slide } from "@/lib/types";
-import { calculateAnimationState, getAnimationStyle } from "@/lib/animation-specs";
 import { getFileIcon } from "@/lib/utils/fileIcons";
+import { getMediaGeometry, getMediaRenderStyle, getTextRenderStyle } from "@/lib/utils/slidePreview";
+import type { ElementType } from "./SlideElementPanels";
+import { SelectionHandles } from "./SelectionHandles";
 
 interface SlideCanvasProps {
   slide: Slide;
@@ -13,6 +15,7 @@ interface SlideCanvasProps {
   onApplyMedia: (mediaName: string) => void;
   onUpdateSlide: (updater: (prev: Slide) => Slide) => void;
   onRequestEditPanel: () => void;
+  onSelectElement?: (element: ElementType) => void;
 }
 
 export default function SlideCanvas({
@@ -23,41 +26,71 @@ export default function SlideCanvas({
   onApplyMedia,
   onUpdateSlide,
   onRequestEditPanel,
+  onSelectElement,
 }: SlideCanvasProps) {
   const [isDraggingText, setIsDraggingText] = useState<boolean>(false);
+  const [isDraggingMedia, setIsDraggingMedia] = useState<boolean>(false);
+  const [isResizingMedia, setIsResizingMedia] = useState<boolean>(false);
+  const [isResizingText, setIsResizingText] = useState<boolean>(false);
+  const [activeHandle, setActiveHandle] = useState<"nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w" | null>(null);
+  const [selectedLayer, setSelectedLayer] = useState<"media" | "text" | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const screenRef = useRef<HTMLDivElement | null>(null);
   const textRef = useRef<HTMLDivElement | null>(null);
+  const mediaRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const mediaDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const resizeStartRef = useRef<{ x: number; y: number; scaleX: number; scaleY: number } | null>(null);
+  const textResizeStartRef = useRef<{ x: number; y: number; fontSize: number } | null>(null);
   const [screenSize, setScreenSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const [screenOffset, setScreenOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [textSize, setTextSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [mediaSize, setMediaSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
   useEffect(() => {
-    if (!isDraggingText) return;
+    if (!isDraggingText && !isResizingText) return;
     const handleMouseUp = () => {
       setIsDraggingText(false);
+      setIsResizingText(false);
       dragOffsetRef.current = null;
+      textResizeStartRef.current = null;
+      if (!isResizingText) {
+        setActiveHandle(null);
+      }
     };
     window.addEventListener("mouseup", handleMouseUp);
     return () => window.removeEventListener("mouseup", handleMouseUp);
-  }, [isDraggingText]);
+  }, [isDraggingText, isResizingText]);
+
+  useEffect(() => {
+    if (!isDraggingMedia && !isResizingMedia) return;
+    const handleMouseUp = () => {
+      setIsDraggingMedia(false);
+      setIsResizingMedia(false);
+      setActiveHandle(null);
+      mediaDragStartRef.current = null;
+      resizeStartRef.current = null;
+    };
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, [isDraggingMedia, isResizingMedia]);
 
   useLayoutEffect(() => {
-    if (!screenRef.current || !workspaceRef.current || !textRef.current) return;
+    if (!screenRef.current || !workspaceRef.current) return;
     const screenEl = screenRef.current;
     const workspaceEl = workspaceRef.current;
-    const textEl = textRef.current;
     const updateSizes = () => {
       const screenRect = screenEl.getBoundingClientRect();
       const workspaceRect = workspaceEl.getBoundingClientRect();
-      const textRect = textEl.getBoundingClientRect();
       setScreenSize({ width: screenRect.width, height: screenRect.height });
       setScreenOffset({
         x: screenRect.left - workspaceRect.left,
         y: screenRect.top - workspaceRect.top,
       });
-      setTextSize({ width: textRect.width, height: textRect.height });
+      if (textRef.current) {
+        const textRect = textRef.current.getBoundingClientRect();
+        setTextSize({ width: textRect.width, height: textRect.height });
+      }
     };
 
     updateSizes();
@@ -65,7 +98,9 @@ export default function SlideCanvas({
     const observer = new ResizeObserver(() => updateSizes());
     observer.observe(screenEl);
     observer.observe(workspaceEl);
-    observer.observe(textEl);
+    if (textRef.current) {
+      observer.observe(textRef.current);
+    }
 
     return () => observer.disconnect();
   }, [
@@ -76,6 +111,37 @@ export default function SlideCanvas({
     slide.resolutionHeight,
   ]);
 
+  useLayoutEffect(() => {
+    if (!mediaRef.current) return;
+    const el = mediaRef.current;
+    const updateMediaSize = () => {
+      if (el instanceof HTMLImageElement) {
+        setMediaSize({
+          width: el.naturalWidth || el.width || 0,
+          height: el.naturalHeight || el.height || 0,
+        });
+      } else {
+        setMediaSize({
+          width: el.videoWidth || el.clientWidth || 0,
+          height: el.videoHeight || el.clientHeight || 0,
+        });
+      }
+    };
+    updateMediaSize();
+    if (el instanceof HTMLImageElement) {
+      el.addEventListener("load", updateMediaSize);
+    } else {
+      el.addEventListener("loadedmetadata", updateMediaSize);
+    }
+    return () => {
+      if (el instanceof HTMLImageElement) {
+        el.removeEventListener("load", updateMediaSize);
+      } else {
+        el.removeEventListener("loadedmetadata", updateMediaSize);
+      }
+    };
+  }, [slide.image, slide.video]);
+
   const handleApplyMedia = () => {
     if (!selectedMediaName) return;
     const selected = media.find((item) => item.name === selectedMediaName);
@@ -83,12 +149,105 @@ export default function SlideCanvas({
     onApplyMedia(selectedMediaName);
   };
 
+  const mediaItem = slide.image || slide.video
+    ? media.find((m) => m.name === (slide.image || slide.video))
+    : null;
+
+  const mediaBounds = (() => {
+    if (!mediaItem) return null;
+    if (!screenSize.width || !screenSize.height) return null;
+    const containerW = screenSize.width;
+    const containerH = screenSize.height;
+    const mediaW = mediaSize.width || 0;
+    const mediaH = mediaSize.height || 0;
+    const geometry = getMediaGeometry(slide, containerW, containerH, mediaW, mediaH);
+    const centerX = screenOffset.x + containerW / 2 + geometry.offsetX;
+    const centerY = screenOffset.y + containerH / 2 + geometry.offsetY;
+    return {
+      left: centerX - geometry.actualWidth / 2,
+      top: centerY - geometry.actualHeight / 2,
+      width: geometry.actualWidth,
+      height: geometry.actualHeight,
+    };
+  })();
+
+  const textBounds = (() => {
+    if (!slide.text) return null;
+    if (!screenSize.width || !screenSize.height) return null;
+    const x = screenOffset.x + ((slide.textPositionX ?? 50) / 100) * screenSize.width;
+    const y = screenOffset.y + ((slide.textPositionY ?? 50) / 100) * screenSize.height;
+    return {
+      left: x - textSize.width / 2,
+      top: y - textSize.height / 2,
+      width: textSize.width,
+      height: textSize.height,
+    };
+  })();
+
   return (
     <div
       ref={workspaceRef}
       className="w-full max-w-5xl aspect-video relative flex items-center justify-center cursor-pointer"
-      onClick={onRequestEditPanel}
+      onClick={() => {
+        setSelectedLayer(null);
+        if (onSelectElement) onSelectElement(null);
+      }}
       onMouseMove={(e) => {
+        if (isDraggingMedia && screenRef.current) {
+          const rect = screenRef.current.getBoundingClientRect();
+          const start = mediaDragStartRef.current;
+          if (!start) return;
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          const nextX = (slide.mediaOffsetX ?? 0) + (dx / rect.width) * 100;
+          const nextY = (slide.mediaOffsetY ?? 0) + (dy / rect.height) * 100;
+          mediaDragStartRef.current = { x: e.clientX, y: e.clientY };
+          onUpdateSlide((prev) => ({
+            ...prev,
+            mediaOffsetX: nextX,
+            mediaOffsetY: nextY,
+          }));
+          return;
+        }
+        if (isResizingMedia && screenRef.current && activeHandle) {
+          const rect = screenRef.current.getBoundingClientRect();
+          const start = resizeStartRef.current;
+          if (!start) return;
+          const dx = (e.clientX - start.x) / rect.width;
+          const dy = (e.clientY - start.y) / rect.height;
+          const baseScaleX = start.scaleX;
+          const baseScaleY = start.scaleY;
+          const factorX = 1 + (activeHandle.includes("e") ? dx : -dx);
+          const factorY = 1 + (activeHandle.includes("s") ? dy : -dy);
+          let nextScaleX = Math.max(0.1, baseScaleX * factorX);
+          let nextScaleY = Math.max(0.1, baseScaleY * factorY);
+          if (e.shiftKey) {
+            const uniform = Math.max(nextScaleX, nextScaleY);
+            nextScaleX = uniform;
+            nextScaleY = uniform;
+          }
+          onUpdateSlide((prev) => ({
+            ...prev,
+            mediaScaleX: nextScaleX,
+            mediaScaleY: nextScaleY,
+          }));
+          return;
+        }
+        if (isResizingText && screenRef.current && activeHandle) {
+          const start = textResizeStartRef.current;
+          if (!start) return;
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          // Calculate distance from origin for scaling
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          const factor = 1 + (distance / 100) * (dx + dy > 0 ? 1 : -1);
+          const nextFontSize = Math.max(12, Math.min(120, Math.round(start.fontSize * factor)));
+          onUpdateSlide((prev) => ({
+            ...prev,
+            fontSize: nextFontSize,
+          }));
+          return;
+        }
         if (!isDraggingText || !screenRef.current) return;
         const effect = slide.textAnimation || "none";
         const rect = screenRef.current.getBoundingClientRect();
@@ -127,119 +286,81 @@ export default function SlideCanvas({
         ref={screenRef}
         className="absolute w-[82%] h-[82%] rounded-lg shadow-2xl overflow-hidden flex items-center justify-center"
         style={{ backgroundColor: slide.backgroundColor }}
+        onClick={(e) => {
+          // 배경 클릭 시 배경 편집 패널 표시
+          if (e.target === e.currentTarget) {
+            e.stopPropagation();
+            setSelectedLayer(null);
+            if (onSelectElement) onSelectElement("background");
+          }
+        }}
       >
-        {(slide.image || slide.video) && (() => {
-          const fileName = slide.image || slide.video;
-          const item = media.find((m) => m.name === fileName);
-          if (!item) return null;
+        {mediaItem && (() => {
+          const containerW = screenSize.width || 1;
+          const containerH = screenSize.height || 1;
+          const mediaW = mediaSize.width || 0;
+          const mediaH = mediaSize.height || 0;
+          const { style: commonStyle } = getMediaRenderStyle(
+            slide,
+            containerW,
+            containerH,
+            mediaW,
+            mediaH,
+            timelinePosition
+          );
+
           return (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-9xl opacity-30">{getFileIcon(item.type)}</span>
+            <div
+              className="absolute inset-0"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                setSelectedLayer("media");
+                if (onSelectElement) onSelectElement("image");
+                setIsDraggingMedia(true);
+                mediaDragStartRef.current = { x: e.clientX, y: e.clientY };
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedLayer("media");
+                if (onSelectElement) onSelectElement("image");
+              }}
+            >
+              {mediaItem.type === "image" && mediaItem.url ? (
+                <img
+                  ref={mediaRef as React.MutableRefObject<HTMLImageElement | null>}
+                  src={mediaItem.url}
+                  alt={mediaItem.name}
+                  style={commonStyle}
+                  className="absolute select-none object-cover"
+                  draggable={false}
+                />
+              ) : mediaItem.type === "video" && mediaItem.url ? (
+                <video
+                  ref={mediaRef as React.MutableRefObject<HTMLVideoElement | null>}
+                  src={mediaItem.url}
+                  style={commonStyle}
+                  className="absolute select-none object-cover"
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                />
+              ) : (
+                <span className="text-9xl opacity-30">{getFileIcon(mediaItem.type)}</span>
+              )}
             </div>
           );
         })()}
       </div>
 
       {slide.text && (() => {
-        const effect = slide.textAnimation || "none";
-        const textPosX = effect === "slide-horizontal"
-          ? 50
-          : (slide.textPositionX ?? 50);
-        const textPosY = effect === "slide-vertical"
-          ? 50
-          : (slide.textPositionY ?? 50);
-        // 애니메이션 설정
-        const animationType = slide.textAnimation || "none";
-        const baseDuration = slide.duration;
-        const delay = slide.textAnimationDelay || 0;
-        const repeat = slide.textAnimationRepeat ?? 1;
-        const gap = slide.textAnimationGap ?? 0;
-        let duration = slide.textAnimationDuration || baseDuration * 0.8;
-        let fadeInDuration = slide.textFadeInDuration ?? Math.min(0.6, baseDuration * 0.1);
-        let fadeOutDuration = slide.textFadeOutDuration ?? Math.min(0.8, baseDuration * 0.2);
-
-        if (animationType === "fade-in-out") {
-          duration = baseDuration;
-          const maxFadeIn = Math.max(0, duration - fadeOutDuration);
-          fadeInDuration = Math.min(fadeInDuration, maxFadeIn);
-          const maxFadeOut = Math.max(0, duration - fadeInDuration);
-          fadeOutDuration = Math.min(fadeOutDuration, maxFadeOut);
-        } else if (animationType !== "none") {
-          if (repeat > 0) {
-            const totalGap = Math.max(0, gap) * Math.max(0, repeat - 1);
-            const available = Math.max(0.1, baseDuration - totalGap);
-            duration = Math.max(0.1, available / repeat);
-          } else {
-            duration = slide.textAnimationDuration || baseDuration * 0.8;
-          }
-        }
-
-        const animationState = calculateAnimationState(
-          {
-            type: animationType,
-            duration,
-            delay,
-            repeat: animationType === "fade-in-out" ? 1 : repeat,
-            gap: animationType === "fade-in-out" ? 0 : gap,
-            fadeInDuration,
-            fadeOutDuration,
-          },
-          timelinePosition
-        );
-
-        const getSlideProgress = () => {
-          if (timelinePosition < delay) return 0;
-          const elapsed = timelinePosition - delay;
-          const cycleDuration = duration + gap;
-          const repeatCount = Math.max(0, Math.floor(repeat));
-          const totalDuration = repeatCount === 0
-            ? Infinity
-            : (repeatCount * duration) + ((repeatCount - 1) * gap);
-          if (elapsed >= totalDuration) return 1;
-          const cycleTime = cycleDuration > 0 ? (elapsed % cycleDuration) : elapsed;
-          if (cycleTime > duration) return 1;
-          return duration > 0 ? Math.min(cycleTime / duration, 1) : 1;
-        };
-
-        const textStyle = getAnimationStyle(animationState);
-        const resolutionWidth = slide.resolutionWidth || screenSize.width || 1920;
-        const resolutionHeight = slide.resolutionHeight || screenSize.height || 1080;
-        const scaleX = resolutionWidth > 0 ? screenSize.width / resolutionWidth : 1;
-        const scaleY = resolutionHeight > 0 ? screenSize.height / resolutionHeight : 1;
-        const virtualTextWidth = scaleX > 0 ? textSize.width / scaleX : textSize.width;
-        const virtualTextHeight = scaleY > 0 ? textSize.height / scaleY : textSize.height;
-        const progress = (animationType === "slide-horizontal" || animationType === "slide-vertical")
-          ? getSlideProgress()
-          : null;
-        const slideX = progress !== null && animationType === "slide-horizontal"
-          ? (
-              (
-                -((resolutionWidth + virtualTextWidth) / 2) +
-                progress * (resolutionWidth + virtualTextWidth)
-              ) * scaleX
-            )
-          : 0;
-        const slideY = progress !== null && animationType === "slide-vertical"
-          ? (
-              (
-                ((resolutionHeight + virtualTextHeight) / 2) -
-                progress * (resolutionHeight + virtualTextHeight)
-              ) * scaleY
-            )
-          : 0;
-
-        const transformValue = (animationType === "slide-horizontal" || animationType === "slide-vertical")
-          ? `translate(-50%, -50%) translate(${slideX}px, ${slideY}px)`
-          : `translate(-50%, -50%) translate(${animationState.translateX}%, ${animationState.translateY}%)`;
-        const finalStyle: React.CSSProperties = {
-          opacity: textStyle.opacity,
-          transform: transformValue,
-          color: slide.textColor || "#000000",
-          fontSize: `${slide.fontSize || 32}px`,
-          fontWeight: "bold",
-          left: screenOffset.x + (textPosX / 100) * screenSize.width,
-          top: screenOffset.y + (textPosY / 100) * screenSize.height,
-        };
+        const { textPosX, textPosY, style } = getTextRenderStyle({
+          slide,
+          timelinePosition,
+          screenSize,
+          screenOffset,
+          textSize,
+        });
 
         return (
           <div
@@ -247,10 +368,12 @@ export default function SlideCanvas({
             className={`absolute select-none whitespace-pre-wrap text-center px-4 py-2 ${
               isDraggingText ? "cursor-grabbing" : "cursor-move"
             }`}
-            style={finalStyle}
+            style={style}
             onMouseDown={(e) => {
               if (!screenRef.current) return;
               e.preventDefault();
+              setSelectedLayer("text");
+              if (onSelectElement) onSelectElement("text");
               const rect = screenRef.current.getBoundingClientRect();
               const currentX = (textPosX / 100) * rect.width;
               const currentY = (textPosY / 100) * rect.height;
@@ -260,11 +383,117 @@ export default function SlideCanvas({
               };
               setIsDraggingText(true);
             }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedLayer("text");
+              if (onSelectElement) onSelectElement("text");
+            }}
           >
             {slide.text}
           </div>
         );
       })()}
+
+      {selectedLayer === "media" && mediaBounds && (
+        <div
+          className="absolute bg-white rounded-md shadow px-2 py-1 flex items-center gap-2"
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            left: mediaBounds.left,
+            top: Math.max(0, mediaBounds.top - 28),
+          }}
+        >
+          <button
+            className="text-xs text-gray-700 hover:text-black"
+            onClick={() =>
+              onUpdateSlide((prev) => ({
+                ...prev,
+                mediaScaleX: 1,
+                mediaScaleY: 1,
+                mediaOffsetX: 0,
+                mediaOffsetY: 0,
+              }))
+            }
+          >
+            맞춤
+          </button>
+          <button
+            className="text-xs text-red-600 hover:text-red-700"
+            onClick={() =>
+              onUpdateSlide((prev) => ({
+                ...prev,
+                image: undefined,
+                video: undefined,
+                mediaId: undefined,
+                mediaScaleX: undefined,
+                mediaScaleY: undefined,
+                mediaOffsetX: undefined,
+                mediaOffsetY: undefined,
+              }))
+            }
+          >
+            삭제
+          </button>
+        </div>
+      )}
+
+      {selectedLayer === "text" && textBounds && (
+        <div
+          className="absolute bg-white rounded-md shadow px-2 py-1 flex items-center gap-2"
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            left: textBounds.left,
+            top: Math.max(0, textBounds.top - 28),
+          }}
+        >
+          <button
+            className="text-xs text-red-600 hover:text-red-700"
+            onClick={() =>
+              onUpdateSlide((prev) => ({
+                ...prev,
+                text: undefined,
+              }))
+            }
+          >
+            삭제
+          </button>
+        </div>
+      )}
+
+      {selectedLayer === "media" && mediaBounds && (
+        <SelectionHandles
+          bounds={mediaBounds}
+          onResizeStart={(handle, e) => {
+            e.stopPropagation();
+            setSelectedLayer("media");
+            setIsResizingMedia(true);
+            setActiveHandle(handle);
+            resizeStartRef.current = {
+              x: e.clientX,
+              y: e.clientY,
+              scaleX: slide.mediaScaleX ?? 1,
+              scaleY: slide.mediaScaleY ?? 1,
+            };
+          }}
+        />
+      )}
+
+      {selectedLayer === "text" && textBounds && (
+        <SelectionHandles
+          bounds={textBounds}
+          onResizeStart={(handle, e) => {
+            e.stopPropagation();
+            setSelectedLayer("text");
+            setIsResizingText(true);
+            setActiveHandle(handle);
+            textResizeStartRef.current = {
+              x: e.clientX,
+              y: e.clientY,
+              fontSize: slide.fontSize || 32,
+            };
+          }}
+        />
+      )}
 
       {!slide.text && !slide.image && !slide.video && (
         <div className="text-gray-400 text-center">

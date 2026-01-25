@@ -10,13 +10,16 @@
 
 import React from "react";
 
-export type TextAnimationType = "none" | "fade-in-out" | "slide-horizontal" | "slide-vertical";
+export type AnimationType = "none" | "fade-in-out" | "slide-left" | "slide-right" | "slide-up" | "slide-down" | "zoom-in" | "zoom-out" | "slide-horizontal" | "slide-vertical";
+
+// 하위 호환성을 위한 별칭
+export type TextAnimationType = AnimationType;
 
 /**
  * 애니메이션 설정
  */
 export interface AnimationConfig {
-  type: TextAnimationType;
+  type: AnimationType;
   duration: number; // 초 단위
   delay: number; // 초 단위
   repeat?: number; // 반복 횟수 (1 = 1회, 0 = 무한 반복)
@@ -32,6 +35,7 @@ export interface AnimationState {
   opacity: number; // 0~1
   translateX: number; // % 단위 (-100 ~ 100)
   translateY: number; // % 단위 (-100 ~ 100)
+  scale: number; // 스케일 (0.1 ~ 3)
 }
 
 /**
@@ -40,14 +44,15 @@ export interface AnimationState {
 export const ANIMATION_SPECS = {
   /**
    * 패턴 1: none (애니메이션 없음)
-   * - 텍스트가 처음부터 끝까지 화면 중앙에 정적으로 표시됨
+   * - 처음부터 끝까지 화면에 정적으로 표시됨
    */
   none: {
-    description: "정적 텍스트 (애니메이션 없음)",
+    description: "효과 없음",
     calculate: (_progress: number, _config?: AnimationConfig): AnimationState => ({
       opacity: 1,
       translateX: 0,
       translateY: 0,
+      scale: 1,
     }),
   },
 
@@ -85,45 +90,125 @@ export const ANIMATION_SPECS = {
         opacity,
         translateX: 0,
         translateY: 0,
+        scale: 1,
       };
     },
   },
 
   /**
-   * 패턴 3: slide-horizontal (가로 슬라이드)
-   * - 0% ~ 100%: 화면 왼쪽 밖(-100%)에서 오른쪽 밖(+100%)으로 이동
-   * - 중앙(0%)을 지나는 시점은 50%
+   * 패턴 3: slide-left (왼쪽으로 슬라이드)
+   * - 0% ~ 100%: 화면 오른쪽 밖(+120%)에서 왼쪽 밖(-120%)으로 이동
    */
-  "slide-horizontal": {
-    description: "왼쪽에서 오른쪽으로 슬라이드",
+  "slide-left": {
+    description: "우 → 좌 슬라이드",
     calculate: (progress: number, _config?: AnimationConfig): AnimationState => {
-      // -120% (왼쪽 밖) → 0% (중앙) → +120% (오른쪽 밖)
-      const translateX = -120 + (progress * 240);
-
+      const translateX = 120 - (progress * 240);
       return {
         opacity: 1,
         translateX,
         translateY: 0,
+        scale: 1,
       };
     },
   },
 
   /**
-   * 패턴 4: slide-vertical (세로 슬라이드)
-   * - 0% ~ 100%: 화면 아래쪽 밖(+100%)에서 위쪽 밖(-100%)으로 이동
-   * - 중앙(0%)을 지나는 시점은 50%
+   * 패턴 4: slide-right (오른쪽으로 슬라이드)
+   * - 0% ~ 100%: 화면 왼쪽 밖(-120%)에서 오른쪽 밖(+120%)으로 이동
    */
-  "slide-vertical": {
-    description: "아래에서 위로 슬라이드",
+  "slide-right": {
+    description: "좌 → 우 슬라이드",
     calculate: (progress: number, _config?: AnimationConfig): AnimationState => {
-      // +120% (아래쪽 밖) → 0% (중앙) → -120% (위쪽 밖)
-      const translateY = 120 - (progress * 240);
+      const translateX = -120 + (progress * 240);
+      return {
+        opacity: 1,
+        translateX,
+        translateY: 0,
+        scale: 1,
+      };
+    },
+  },
 
+  /**
+   * 패턴 5: slide-up (위로 슬라이드)
+   * - 0% ~ 100%: 화면 아래쪽 밖(+120%)에서 위쪽 밖(-120%)으로 이동
+   */
+  "slide-up": {
+    description: "하 → 상 슬라이드",
+    calculate: (progress: number, _config?: AnimationConfig): AnimationState => {
+      const translateY = 120 - (progress * 240);
       return {
         opacity: 1,
         translateX: 0,
         translateY,
+        scale: 1,
       };
+    },
+  },
+
+  /**
+   * 패턴 6: slide-down (아래로 슬라이드)
+   * - 0% ~ 100%: 화면 위쪽 밖(-120%)에서 아래쪽 밖(+120%)으로 이동
+   */
+  "slide-down": {
+    description: "상 → 하 슬라이드",
+    calculate: (progress: number, _config?: AnimationConfig): AnimationState => {
+      const translateY = -120 + (progress * 240);
+      return {
+        opacity: 1,
+        translateX: 0,
+        translateY,
+        scale: 1,
+      };
+    },
+  },
+
+  /**
+   * 패턴 7: zoom-in (줌 인)
+   * - 0% ~ 100%: 작은 크기(0.3)에서 큰 크기(3)로 확대
+   */
+  "zoom-in": {
+    description: "줌 인",
+    calculate: (progress: number, _config?: AnimationConfig): AnimationState => {
+      const scale = 0.3 + (progress * 2.7);
+      return {
+        opacity: 1,
+        translateX: 0,
+        translateY: 0,
+        scale,
+      };
+    },
+  },
+
+  /**
+   * 패턴 8: zoom-out (줌 아웃)
+   * - 0% ~ 100%: 큰 크기(3)에서 작은 크기(0.3)로 축소
+   */
+  "zoom-out": {
+    description: "줌 아웃",
+    calculate: (progress: number, _config?: AnimationConfig): AnimationState => {
+      const scale = 3 - (progress * 2.7);
+      return {
+        opacity: 1,
+        translateX: 0,
+        translateY: 0,
+        scale,
+      };
+    },
+  },
+
+  // 하위 호환성을 위한 별칭
+  "slide-horizontal": {
+    description: "좌 → 우 슬라이드 (구버전)",
+    calculate: (progress: number, config?: AnimationConfig): AnimationState => {
+      return ANIMATION_SPECS["slide-right"].calculate(progress, config);
+    },
+  },
+
+  "slide-vertical": {
+    description: "하 → 상 슬라이드 (구버전)",
+    calculate: (progress: number, config?: AnimationConfig): AnimationState => {
+      return ANIMATION_SPECS["slide-up"].calculate(progress, config);
     },
   },
 } as const;
@@ -147,17 +232,29 @@ export function calculateAnimationState(
   if (currentTime < delay) {
     // fade-in-out의 경우 초기 상태는 투명
     if (type === "fade-in-out") {
-      return { opacity: 0, translateX: 0, translateY: 0 };
+      return { opacity: 0, translateX: 0, translateY: 0, scale: 1 };
     }
     // slide 애니메이션의 경우 초기 위치
-    if (type === "slide-horizontal") {
-      return { opacity: 1, translateX: -120, translateY: 0 };
+    if (type === "slide-right" || type === "slide-horizontal") {
+      return { opacity: 1, translateX: -120, translateY: 0, scale: 1 };
     }
-    if (type === "slide-vertical") {
-      return { opacity: 1, translateX: 0, translateY: 120 };
+    if (type === "slide-left") {
+      return { opacity: 1, translateX: 120, translateY: 0, scale: 1 };
+    }
+    if (type === "slide-up" || type === "slide-vertical") {
+      return { opacity: 1, translateX: 0, translateY: 120, scale: 1 };
+    }
+    if (type === "slide-down") {
+      return { opacity: 1, translateX: 0, translateY: -120, scale: 1 };
+    }
+    if (type === "zoom-in") {
+      return { opacity: 1, translateX: 0, translateY: 0, scale: 0.3 };
+    }
+    if (type === "zoom-out") {
+      return { opacity: 1, translateX: 0, translateY: 0, scale: 3 };
     }
     // none의 경우 항상 보임
-    return { opacity: 1, translateX: 0, translateY: 0 };
+    return { opacity: 1, translateX: 0, translateY: 0, scale: 1 };
   }
 
   const elapsed = currentTime - delay;
@@ -193,19 +290,20 @@ export function calculateAnimationState(
  * @returns 기본 애니메이션 설정
  */
 export function getDefaultAnimationConfig(
-  type: TextAnimationType,
+  type: AnimationType,
   slideDuration: number
 ): AnimationConfig {
   // 기본값: 슬라이드 duration의 80%를 애니메이션 duration으로 사용
   const duration = slideDuration * 0.8;
-  const isSlide = type === "slide-horizontal" || type === "slide-vertical";
+  const isSlide = type.startsWith("slide-");
+  const isZoom = type.startsWith("zoom-");
 
   return {
     type,
     duration,
     delay: 0,
-    repeat: isSlide ? 2 : 1,
-    gap: isSlide ? 3 : 0,
+    repeat: isSlide || isZoom ? 2 : 1,
+    gap: isSlide || isZoom ? 3 : 0,
     fadeInDuration: Math.min(0.6, slideDuration * 0.1),
     fadeOutDuration: Math.min(0.8, slideDuration * 0.2),
   };
@@ -220,7 +318,7 @@ export function getDefaultAnimationConfig(
 export function getAnimationStyle(state: AnimationState): React.CSSProperties {
   return {
     opacity: state.opacity,
-    transform: `translate(${state.translateX}%, ${state.translateY}%)`,
+    transform: `translate(${state.translateX}%, ${state.translateY}%) scale(${state.scale})`,
     transition: "none", // 타임라인 스크러빙을 위해 transition 비활성화
   };
 }

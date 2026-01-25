@@ -35,6 +35,18 @@ export default function DashboardLayout({
             📊 대시보드
           </Link>
 
+          {/* 회원 관리 */}
+          <Link
+            href="/dashboard/members"
+            className={`block px-4 py-3 rounded-lg transition-colors ${
+              pathname.startsWith("/dashboard/members")
+                ? "bg-cyan-500 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            👥 회원 관리
+          </Link>
+
           {/* 단말기 */}
           <div>
             <button
@@ -60,7 +72,7 @@ export default function DashboardLayout({
             )}
           </div>
 
-          {/* 프로젝트 */}
+          {/* 광고 프로젝트 */}
           <Link
             href="/dashboard/projects"
             className={`block px-4 py-3 rounded-lg transition-colors ${
@@ -69,7 +81,7 @@ export default function DashboardLayout({
                 : "bg-white text-gray-700 hover:bg-gray-100"
             }`}
           >
-            📁 프로젝트
+            📁 광고 프로젝트
           </Link>
 
           {/* 플레이리스트 */}
@@ -94,18 +106,6 @@ export default function DashboardLayout({
             }`}
           >
             📡 송출 관리
-          </Link>
-
-          {/* 회원 관리 */}
-          <Link
-            href="/dashboard/members"
-            className={`block px-4 py-3 rounded-lg transition-colors ${
-              pathname.startsWith("/dashboard/members")
-                ? "bg-cyan-500 text-white"
-                : "bg-white text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            👥 회원 관리
           </Link>
         </nav>
       </aside>

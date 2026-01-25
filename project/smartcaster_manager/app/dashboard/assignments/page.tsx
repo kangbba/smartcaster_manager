@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { getPlaylistSummaries } from "@/lib/data/playlists";
+import { supabase } from "@/lib/supabase/client";
 import { devicesData } from "@/lib/data/devices";
 import { membersData } from "@/lib/data/members";
 import { getAssignments, setAssignments, subscribeAssignments } from "@/lib/data/assignmentsStore";
-import PlaylistPreviewGrid from "@/app/components/PlaylistPreviewGrid";
+import PlaylistPreviewGrid, { type PreviewSlideData } from "@/app/components/PlaylistPreviewGrid";
+import type { Slide } from "@/lib/types";
 
 export default function AssignmentsPage() {
-  const playlistSummaries = getPlaylistSummaries();
+  const [playlistSummaries, setPlaylistSummaries] = useState<Array<{ id: string; name: string; slideCount: number; totalDuration: string; previewSlides: PreviewSlideData[] }>>([]);
   const playlistById = useMemo(
     () => new Map(playlistSummaries.map((p) => [p.id, p])),
     [playlistSummaries]
@@ -19,8 +20,8 @@ export default function AssignmentsPage() {
   );
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(devicesData[0]?.id ?? "");
-  const deviceAssignments = useSyncExternalStore(subscribeAssignments, getAssignments);
-  const [draftAssignments, setDraftAssignments] = useState<Record<string, number | null>>(getAssignments());
+  const deviceAssignments = useSyncExternalStore(subscribeAssignments, getAssignments, getAssignments);
+  const [draftAssignments, setDraftAssignments] = useState<Record<string, string | null>>(getAssignments());
 
   const selectedDevice = devicesData.find((device) => device.id === selectedDeviceId);
   const selectedPlaylistId = selectedDevice ? deviceAssignments[selectedDevice.id] : null;
@@ -37,6 +38,72 @@ export default function AssignmentsPage() {
   useEffect(() => {
     setDraftAssignments(deviceAssignments);
   }, [deviceAssignments]);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase
+        .from("playlists")
+        .select("id,name,created_at");
+      const { data: itemData } = await supabase
+        .from("playlist_items")
+        .select("playlist_id,slide_id");
+      const { data: slideData } = await supabase
+        .from("slides")
+        .select("id,duration_seconds");
+
+      type SlideRow = { id: string; duration_seconds: number | null; background_color?: string | null };
+      type ItemRow = { playlist_id: string; slide_id: string };
+      type PlaylistRow = { id: string; name: string };
+
+      const slideById = new Map(
+        (slideData as SlideRow[] | null | undefined || []).map((s) => [s.id, s.duration_seconds || 0])
+      );
+      const slideBgById = new Map(
+        (slideData as SlideRow[] | null | undefined || []).map((s) => [s.id, s.background_color || "#000000"])
+      );
+      const itemsByPlaylist = new Map<string, string[]>();
+      ((itemData as ItemRow[] | null | undefined) || []).forEach((item) => {
+        if (!itemsByPlaylist.has(item.playlist_id)) {
+          itemsByPlaylist.set(item.playlist_id, []);
+        }
+        itemsByPlaylist.get(item.playlist_id)?.push(item.slide_id);
+      });
+
+      const summaries: Array<{ id: string; name: string; slideCount: number; totalDuration: string; previewSlides: PreviewSlideData[] }> =
+        ((data as PlaylistRow[] | null | undefined) || []).map((playlist) => {
+        const slideIds = itemsByPlaylist.get(playlist.id) || [];
+        const durations = slideIds.map((id) => slideById.get(id) || 0);
+        const totalSeconds = durations.reduce((sum, v) => sum + v, 0);
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        return {
+          id: playlist.id,
+          name: playlist.name,
+          slideCount: slideIds.length,
+          totalDuration: `${mins}분 ${secs}초`,
+          previewSlides: slideIds.slice(0, 4).map((id) => {
+            const backgroundColor = slideBgById.get(id) || "#000000";
+            const slide: Slide = {
+              id,
+              projectId: "",
+              projectName: "",
+              name: "슬라이드",
+              duration: slideById.get(id) || 10,
+              backgroundColor,
+              resolutionWidth: 1920,
+              resolutionHeight: 1080,
+            };
+            return {
+              slide,
+              media: null,
+            };
+          }),
+        };
+      });
+      setPlaylistSummaries(summaries);
+    };
+    void load();
+  }, []);
 
   return (
     <div className="p-8">
@@ -246,7 +313,7 @@ export default function AssignmentsPage() {
               >
                 <div className="flex items-center gap-3">
                   <div className="w-16 h-16 rounded-lg bg-gray-50 p-1">
-                    <PlaylistPreviewGrid slides={playlist.previewSlides} columns={2} size="sm" showNames={false} />
+                    <PlaylistPreviewGrid slides={playlist.previewSlides} columns={2} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-gray-800 truncate">{playlist.name}</div>
